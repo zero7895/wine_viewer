@@ -37,10 +37,33 @@ python -m playwright install chromium
 python scrape_littlewine.py
 ```
 
+預設行為：
+
+- 未給 `--markets`：會抓全部賣場（大全聯、全聯、好市多、家樂福、美廉社、大潤發、愛買）
+- 未給 `--refresh`：會重用已存在於 `littlewine_red_pxmart_links.json` 的解析結果，不重複 parse
+
 若要看到瀏覽器操作畫面（除錯用）：
 
 ```bash
 python scrape_littlewine.py --headed
+```
+
+只抓指定賣場（逗號分隔）：
+
+```bash
+python scrape_littlewine.py --markets "全聯,家樂福"
+```
+
+強制重抓詳細頁（忽略快取）：
+
+```bash
+python scrape_littlewine.py --refresh
+```
+
+可搭配使用：
+
+```bash
+python scrape_littlewine.py --markets "全聯,家樂福" --refresh --limit 3
 ```
 
 ## 輸出格式

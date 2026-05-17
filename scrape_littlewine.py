@@ -23,6 +23,7 @@ HTML_OUTPUT = "red_wine.html"
 CSV_OUTPUT = "littlewine_red_pxmart_links.csv"
 JSON_OUTPUT = "littlewine_red_pxmart_links.json"
 IMAGE_DIR = "images"
+ALL_MARKETS = ["大全聯", "全聯", "好市多", "家樂福", "美廉社", "大潤發", "愛買"]
 
 
 @dataclass(frozen=True)
@@ -689,6 +690,72 @@ async def enrich_wine_details(browser: Browser, items: list[WineLink]) -> list[W
     return enriched
 
 
+def load_cached_items(output_path: Path) -> dict[tuple[str, str], WineLink]:
+    """Load previously parsed items from JSON output as a cache."""
+    if not output_path.exists():
+        return {}
+
+    try:
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    if not isinstance(payload, list):
+        return {}
+
+    cache: dict[tuple[str, str], WineLink] = {}
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        market = str(row.get("market", "") or "").strip()
+        url = str(row.get("url", "") or "").strip()
+        if not market or not url:
+            continue
+
+        cache[(market, url)] = WineLink(
+            market=market,
+            title=str(row.get("title", "") or "").strip(),
+            url=url,
+            region=str(row.get("region", "") or "").strip(),
+            country=str(row.get("country", "") or "").strip(),
+            grape=str(row.get("grape", "") or "").strip(),
+            abv=str(row.get("abv", "") or "").strip(),
+            vintage=str(row.get("vintage", "") or "").strip(),
+            winery=str(row.get("winery", "") or "").strip(),
+            sweetness=str(row.get("sweetness", "") or "").strip(),
+            acidity=str(row.get("acidity", "") or "").strip(),
+            body=str(row.get("body", "") or "").strip(),
+            rating=str(row.get("rating", "") or "").strip(),
+            reference_price=str(row.get("reference_price", "") or "").strip(),
+            image_url=str(row.get("image_url", "") or "").strip(),
+            image_path=str(row.get("image_path", "") or "").strip(),
+        )
+
+    return cache
+
+
+def merge_with_current_item(current: WineLink, cached: WineLink) -> WineLink:
+    """Keep current market/title/url, reuse parsed detail fields from cache."""
+    return WineLink(
+        market=current.market,
+        title=current.title or cached.title,
+        url=current.url,
+        region=cached.region,
+        country=cached.country,
+        grape=cached.grape,
+        abv=cached.abv,
+        vintage=cached.vintage,
+        winery=cached.winery,
+        sweetness=cached.sweetness,
+        acidity=cached.acidity,
+        body=cached.body,
+        rating=cached.rating,
+        reference_price=cached.reference_price,
+        image_url=cached.image_url,
+        image_path=cached.image_path,
+    )
+
+
 def write_csv(items: list[WineLink], output_path: Path) -> None:
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
@@ -763,20 +830,30 @@ def write_json(items: list[WineLink], output_path: Path) -> None:
 
 
 def write_html(items: list[WineLink], output_path: Path) -> None:
+    def _rating_value(raw: str) -> float:
+        m = re.search(r"([0-5](?:\.\d+)?)", raw or "")
+        return float(m.group(1)) if m else -1.0
+
+    def _price_value(raw: str) -> int:
+        digits = re.sub(r"\D", "", raw or "")
+        return int(digits) if digits else -1
+
+    # 預設先依星等高到低（同星等再依參考價高到低）輸出。
+    items = sorted(items, key=lambda x: (_rating_value(x.rating), _price_value(x.reference_price), x.title), reverse=True)
+
     markets = sorted({item.market for item in items})
     chips = "\n".join(
         f'      <button class="chip" data-market="{market}">{market}</button>' for market in markets
     )
     rows = "\n".join(
         (
-            f'        <tr data-market="{item.market}">'
+            f'        <tr data-market="{item.market}" data-rating="{item.rating or ""}" data-price="{item.reference_price or ""}">'
             f'<td><span class="tag">{item.market}</span></td>'
             f'<td><a href="{item.url}" target="_blank" rel="noopener noreferrer">{item.title}</a></td>'
-            f'<td>{item.region or "-"}</td>'
             f'<td>{item.country or "-"}</td>'
+            f'<td>{item.region or "-"}</td>'
             f'<td>{item.grape or "-"}</td>'
             f'<td>{item.abv or "-"}</td>'
-            f'<td>{item.vintage or "-"}</td>'
             f'<td>{item.winery or "-"}</td>'
             f'<td>{item.sweetness or "-"}</td>'
             f'<td>{item.acidity or "-"}</td>'
@@ -798,7 +875,7 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
   <head>
     <meta charset=\"utf-8\" />
     <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-    <title>littlewine 紅酒（大全聯/全聯）連結清單</title>
+    <title>littlewine 紅酒連結清單</title>
     <style>
       body {{
         font-family: "Noto Sans TC", "PingFang TC", sans-serif;
@@ -816,14 +893,14 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e9eef7; vertical-align: top; }}
       th {{ background: #f4f8ff; font-weight: 600; }}
       tr:hover td {{ background: #fafcff; }}
-      .thumb {{ width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid #dbe5f3; background: #fff; }}
+      .thumb {{ width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid #dbe5f3; background: #fff; }}
       .tag {{ display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 12px; background: #eef5ff; color: #114488; font-size: 0.85rem; }}
       a {{ color: #114488; text-decoration: none; }}
       a:hover {{ text-decoration: underline; }}
     </style>
   </head>
   <body>
-    <h1>littlewine 紅酒（大全聯 / 全聯）連結清單</h1>
+    <h1>littlewine 紅酒連結清單</h1>
     <p class=\"meta\">目前顯示 <span id=\"visible-count\">{len(items)}</span> / 全部 <span id=\"total-count\">{len(items)}</span> 筆</p>
     <div class=\"toolbar\">
       <div class=\"toolbar-left\">
@@ -841,11 +918,10 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
           <tr>
             <th>賣場</th>
             <th>酒款</th>
-            <th>產區</th>
             <th>國家</th>
+            <th>產區</th>
             <th>葡萄品種</th>
             <th>酒精濃度</th>
-            <th>年份</th>
             <th>酒莊(廠)</th>
             <th>甜度</th>
             <th>酸度</th>
@@ -869,7 +945,7 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       let currentMarket = 'ALL';
 
       function parseRating(text) {{
-        const match = (text || '').match(/([0-5](?:\.5)?)/);
+        const match = (text || '').match(/([0-5](?:\.\d+)?)/);
         return match ? Number(match[1]) : -1;
       }}
 
@@ -886,18 +962,18 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
           const bTitle = bCells[1]?.innerText || '';
 
           if (mode === 'price') {{
-            const aPrice = parsePrice(aCells[12]?.innerText || '');
-            const bPrice = parsePrice(bCells[12]?.innerText || '');
+            const aPrice = parsePrice(a.dataset.price || '');
+            const bPrice = parsePrice(b.dataset.price || '');
             if (aPrice !== bPrice) return bPrice - aPrice;
             return aTitle.localeCompare(bTitle, 'zh-Hant');
           }}
 
-          const aRating = parseRating(aCells[11]?.innerText || '');
-          const bRating = parseRating(bCells[11]?.innerText || '');
+          const aRating = parseRating(a.dataset.rating || '');
+          const bRating = parseRating(b.dataset.rating || '');
           if (aRating !== bRating) return bRating - aRating;
 
-          const aPrice = parsePrice(aCells[12]?.innerText || '');
-          const bPrice = parsePrice(bCells[12]?.innerText || '');
+          const aPrice = parsePrice(a.dataset.price || '');
+          const bPrice = parsePrice(b.dataset.price || '');
           if (aPrice !== bPrice) return bPrice - aPrice;
 
           return aTitle.localeCompare(bTitle, 'zh-Hant');
@@ -949,15 +1025,37 @@ async def scrape_market(page: Page, market: str, limit: int | None = None) -> li
     return await scrape_all_results(page, market, limit=limit)
 
 
-async def run(headed: bool, limit: int | None) -> list[WineLink]:
+def parse_markets_arg(markets_arg: str | None) -> list[str]:
+    if not markets_arg or not markets_arg.strip():
+        return list(ALL_MARKETS)
+
+    requested = [m.strip() for m in markets_arg.split(",") if m.strip()]
+    if not requested:
+        return list(ALL_MARKETS)
+
+    invalid = [m for m in requested if m not in ALL_MARKETS]
+    if invalid:
+        raise ValueError(
+            f"Unknown markets: {', '.join(invalid)}. Supported: {', '.join(ALL_MARKETS)}"
+        )
+
+    seen: set[str] = set()
+    ordered_unique: list[str] = []
+    for m in requested:
+        if m not in seen:
+            ordered_unique.append(m)
+            seen.add(m)
+    return ordered_unique
+
+
+async def run(headed: bool, limit: int | None, markets: list[str], refresh: bool) -> list[WineLink]:
     async with async_playwright() as p:
         browser: Browser = await p.chromium.launch(headless=not headed)
         page = await browser.new_page(viewport={"width": 1366, "height": 900})
         try:
-            market_labels = ["大全聯", "全聯"]
             merged: dict[tuple[str, str], WineLink] = {}
 
-            for market in market_labels:
+            for market in markets:
                 links = await scrape_market(page, market, limit=limit)
                 if limit is not None:
                     print(f"[INFO] {market}: keep first {len(links)} links")
@@ -966,7 +1064,27 @@ async def run(headed: bool, limit: int | None) -> list[WineLink]:
 
             merged_items = sorted(merged.values(), key=lambda x: (x.market, x.title))
             print(f"[DETAIL] Start detail scraping for {len(merged_items)} links...")
-            enriched = await enrich_wine_details(browser, merged_items)
+
+            cache = {} if refresh else load_cached_items(Path(JSON_OUTPUT))
+            to_parse: list[WineLink] = []
+            reused: list[WineLink] = []
+            for item in merged_items:
+                key = (item.market, item.url)
+                cached = cache.get(key)
+                if cached is None:
+                    to_parse.append(item)
+                    continue
+                reused.append(merge_with_current_item(item, cached))
+
+            if refresh:
+                print("[CACHE] Refresh mode on, skip cache reuse")
+            elif reused:
+                print(f"[CACHE] Reused {len(reused)} parsed items from {JSON_OUTPUT}")
+            if to_parse:
+                print(f"[DETAIL] Need to parse {len(to_parse)} new items...")
+
+            enriched_new = await enrich_wine_details(browser, to_parse) if to_parse else []
+            enriched = sorted([*reused, *enriched_new], key=lambda x: (x.market, x.title))
             return enriched
         finally:
             await browser.close()
@@ -984,6 +1102,17 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Only keep first N links before scraping details",
+    )
+    parser.add_argument(
+        "--markets",
+        type=str,
+        default=None,
+        help="Comma-separated markets, e.g. '全聯,家樂福'. Default: all markets",
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Force re-parse all detail pages and ignore JSON cache",
     )
     return parser.parse_args()
 
@@ -1034,7 +1163,12 @@ def download_images(items: list[WineLink], output_dir: Path) -> list[WineLink]:
 
 def main() -> None:
     args = parse_args()
-    links = asyncio.run(run(headed=args.headed, limit=args.limit))
+    try:
+        markets = parse_markets_arg(args.markets)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+    links = asyncio.run(run(headed=args.headed, limit=args.limit, markets=markets, refresh=args.refresh))
     links = download_images(links, Path(IMAGE_DIR))
 
     write_html(links, Path(HTML_OUTPUT))
