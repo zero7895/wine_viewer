@@ -12,7 +12,8 @@
       }
       h1 { margin-bottom: 0.25rem; }
       p.meta { color: #555; margin-top: 0; }
-      .toolbar { margin: 10px 0 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+      .toolbar { margin: 10px 0 16px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; align-items: center; }
+      .toolbar-left, .toolbar-right { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
       .chip { border: 1px solid #114488; background: #fff; color: #114488; border-radius: 16px; padding: 4px 10px; cursor: pointer; }
       .chip.active { background: #114488; color: #fff; }
       .table-wrap { overflow-x: auto; border: 1px solid #dbe5f3; border-radius: 10px; }
@@ -30,9 +31,15 @@
     <h1>littlewine 紅酒（大全聯 / 全聯）連結清單</h1>
     <p class="meta">目前顯示 <span id="visible-count">6</span> / 全部 <span id="total-count">6</span> 筆</p>
     <div class="toolbar">
-      <button class="chip active" data-market="ALL">全部</button>
+      <div class="toolbar-left">
+        <button class="chip active" data-market="ALL">全部</button>
       <button class="chip" data-market="全聯">全聯</button>
       <button class="chip" data-market="大全聯">大全聯</button>
+      </div>
+      <div class="toolbar-right">
+        <button class="chip sort-chip active" data-sort="rating">星等高到低</button>
+        <button class="chip sort-chip" data-sort="price">參考價高到低</button>
+      </div>
     </div>
     <div class="table-wrap">
       <table>
@@ -55,20 +62,63 @@
           </tr>
         </thead>
         <tbody>
-        <tr data-market="全聯"><td><span class="tag">全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=4.5+%e9%a1%86%e6%98%9f%e6%8e%a8%e8%96%a6%e7%9a%84%e7%be%a9%e5%a4%a7%e5%88%a9+Toscana+%e7%b4%85%e9%85%92&Wine=1895+Rosso" target="_blank" rel="noopener noreferrer">1895 Rosso</a></td><td>Toscana</td><td>義大利</td><td>Sangiovese 混合Cabernet and Merlot(100%)</td><td>14%</td><td>2017</td><td>Verga La Storia</td><td>酸度</td><td>飽滿度</td><td>適合搭配食物</td><td>25/5</td><td>$499</td><td><a href="https://littlewine.com.tw/Upload/20241005/1895.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/561c6b888346.png" alt="1895 Rosso" loading="lazy" /></a></td></tr>
-        <tr data-market="全聯"><td><span class="tag">全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e6%9e%9c%e5%91%b3%e7%94%9c%e7%be%8e%e7%9a%84%e5%8d%97%e6%b3%95%e9%a4%90%e9%85%92&Wine=Bavardages+Merlot" target="_blank" rel="noopener noreferrer">Bavardages Merlot</a></td><td>PAYS D'OC</td><td>法國</td><td>Merlot(100%)</td><td>14%</td><td>2018</td><td>LGI</td><td>酸度</td><td>飽滿度</td><td>適合搭配食物</td><td>25/5</td><td>$389</td><td><a href="https://littlewine.com.tw/Upload/20240821/bavardages%20merlot.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/d1d7cb2c7c62.png" alt="Bavardages Merlot" loading="lazy" /></a></td></tr>
-        <tr data-market="全聯"><td><span class="tag">全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e6%9e%9c%e5%91%b3%e8%b1%90%e6%b2%9b%e3%80%81%e5%8f%a3%e6%84%9f%e6%b8%85%e6%96%b0%e7%9a%84%e9%98%bf%e6%a0%b9%e5%bb%b7+CATENA+Malbec&Wine=D.V+Catena+Historico+Malbec" target="_blank" rel="noopener noreferrer">D.V Catena Historico Malbec</a></td><td>Mendoza</td><td>阿根廷</td><td>Malbec(100%)</td><td>13.5%</td><td>2017</td><td>D.V Catena</td><td>酸度</td><td>飽滿度</td><td>適合搭配食物</td><td>25/5</td><td>$999</td><td><a href="https://littlewine.com.tw/Upload/20250317/catena.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/29b6c529057e.png" alt="D.V Catena Historico Malbec" loading="lazy" /></a></td></tr>
-        <tr data-market="大全聯"><td><span class="tag">大全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e7%be%a9%e5%a4%a7%e5%88%a9+1895+Primitivo+di+Manduria+%e8%a9%95%e6%b8%ac%ef%bd%9c%e5%8d%97%e7%be%a9%e6%99%ae%e5%88%a9%e4%ba%9e%e7%9a%84%e6%9e%9c%e9%a6%99%e8%88%87%e6%9f%94%e9%a0%86%e5%8f%a3%e6%84%9f&Wine=1895+Primitivo+di+Manduria+DOC" target="_blank" rel="noopener noreferrer">1895 Primitivo di Manduria DOC</a></td><td>Manduria, Puglia</td><td>義大利</td><td>Primitivo(100%)</td><td>14.5%</td><td>2020</td><td>Casa Vinicola Natale Verga</td><td>酸度</td><td>飽滿度</td><td>適合搭配食物</td><td>25/5</td><td>$649</td><td><a href="https://littlewine.com.tw/Upload/20251102/1895%20primitivo%20di%20manduria%20doc.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/466f1e07b663.png" alt="1895 Primitivo di Manduria DOC" loading="lazy" /></a></td></tr>
-        <tr data-market="大全聯"><td><span class="tag">大全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e8%a6%aa%e6%b0%91%e5%84%aa%e9%9b%85%e7%9a%84+1895+Verga+La+Storia+Barolo&Wine=1895+Verga+La+Storia+Barolo" target="_blank" rel="noopener noreferrer">1895 Verga La Storia Barolo</a></td><td>Barolo DOCG，Piemonte</td><td>義大利</td><td>Nebbiolo(100%)</td><td>14%</td><td>2023</td><td>Casa Vinicola Natale Verga</td><td>酸度</td><td>飽滿度</td><td>適合搭配食物</td><td>25/5</td><td>$1099</td><td><a href="https://littlewine.com.tw/Upload/20251107/1895%20verga%20la%20storia%20barolo.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/0f10de85c16c.png" alt="1895 Verga La Storia Barolo" loading="lazy" /></a></td></tr>
-        <tr data-market="大全聯"><td><span class="tag">大全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e8%bc%95%e6%9f%94%e5%9c%93%e6%bb%91%e7%9a%84%e7%be%a9%e5%a4%a7%e5%88%a9%e6%b7%b7%e9%87%80&Wine=Canaja+Gold+Rosso+Veronese" target="_blank" rel="noopener noreferrer">Canaja Gold Rosso Veronese</a></td><td>Veneto</td><td>義大利</td><td>混釀(100%)</td><td>14%</td><td>2021</td><td>Villa Annaberta</td><td>酸度</td><td>飽滿度</td><td>適合搭配食物</td><td>25/5</td><td>$399</td><td><a href="https://littlewine.com.tw/Upload/20260411/canaia%20gold%20rosso%20verona%202018.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/0aaf7db7a659.png" alt="Canaja Gold Rosso Veronese" loading="lazy" /></a></td></tr>
+        <tr data-market="全聯"><td><span class="tag">全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=4.5+%e9%a1%86%e6%98%9f%e6%8e%a8%e8%96%a6%e7%9a%84%e7%be%a9%e5%a4%a7%e5%88%a9+Toscana+%e7%b4%85%e9%85%92&Wine=1895+Rosso" target="_blank" rel="noopener noreferrer">1895 Rosso</a></td><td>Toscana</td><td>義大利</td><td>Sangiovese 混合Cabernet and Merlot(100%)</td><td>14%</td><td>2017</td><td>Verga La Storia</td><td>1/5</td><td>4/5</td><td>4/5</td><td>4.5/5</td><td>$499</td><td><a href="https://littlewine.com.tw/Upload/20241005/1895.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/561c6b888346.png" alt="1895 Rosso" loading="lazy" /></a></td></tr>
+        <tr data-market="全聯"><td><span class="tag">全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e6%9e%9c%e5%91%b3%e7%94%9c%e7%be%8e%e7%9a%84%e5%8d%97%e6%b3%95%e9%a4%90%e9%85%92&Wine=Bavardages+Merlot" target="_blank" rel="noopener noreferrer">Bavardages Merlot</a></td><td>PAYS D'OC</td><td>法國</td><td>Merlot(100%)</td><td>14%</td><td>2017</td><td>LGI</td><td>1/5</td><td>4/5</td><td>4/5</td><td>3.5/5</td><td>$389</td><td><a href="https://littlewine.com.tw/Upload/20240821/bavardages%20merlot.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/d1d7cb2c7c62.png" alt="Bavardages Merlot" loading="lazy" /></a></td></tr>
+        <tr data-market="全聯"><td><span class="tag">全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e6%9e%9c%e5%91%b3%e8%b1%90%e6%b2%9b%e3%80%81%e5%8f%a3%e6%84%9f%e6%b8%85%e6%96%b0%e7%9a%84%e9%98%bf%e6%a0%b9%e5%bb%b7+CATENA+Malbec&Wine=D.V+Catena+Historico+Malbec" target="_blank" rel="noopener noreferrer">D.V Catena Historico Malbec</a></td><td>Mendoza</td><td>阿根廷</td><td>Malbec(100%)</td><td>13.5%</td><td>2022年</td><td>D.V Catena</td><td>1/5</td><td>4/5</td><td>4/5</td><td>4/5</td><td>$999</td><td><a href="https://littlewine.com.tw/Upload/20250317/catena.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/29b6c529057e.png" alt="D.V Catena Historico Malbec" loading="lazy" /></a></td></tr>
+        <tr data-market="大全聯"><td><span class="tag">大全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e7%be%a9%e5%a4%a7%e5%88%a9+1895+Primitivo+di+Manduria+%e8%a9%95%e6%b8%ac%ef%bd%9c%e5%8d%97%e7%be%a9%e6%99%ae%e5%88%a9%e4%ba%9e%e7%9a%84%e6%9e%9c%e9%a6%99%e8%88%87%e6%9f%94%e9%a0%86%e5%8f%a3%e6%84%9f&Wine=1895+Primitivo+di+Manduria+DOC" target="_blank" rel="noopener noreferrer">1895 Primitivo di Manduria DOC</a></td><td>Manduria, Puglia</td><td>義大利</td><td>Primitivo(100%)</td><td>14.5%</td><td>2023年</td><td>Casa Vinicola Natale Verga</td><td>2/5</td><td>3/5</td><td>5/5</td><td>3.5/5</td><td>$649</td><td><a href="https://littlewine.com.tw/Upload/20251102/1895%20primitivo%20di%20manduria%20doc.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/466f1e07b663.png" alt="1895 Primitivo di Manduria DOC" loading="lazy" /></a></td></tr>
+        <tr data-market="大全聯"><td><span class="tag">大全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e8%a6%aa%e6%b0%91%e5%84%aa%e9%9b%85%e7%9a%84+1895+Verga+La+Storia+Barolo&Wine=1895+Verga+La+Storia+Barolo" target="_blank" rel="noopener noreferrer">1895 Verga La Storia Barolo</a></td><td>Barolo DOCG，Piemonte</td><td>義大利</td><td>Nebbiolo(100%)</td><td>14%</td><td>2023</td><td>Casa Vinicola Natale Verga</td><td>1/5</td><td>5/5</td><td>4/5</td><td>3.5/5</td><td>$1099</td><td><a href="https://littlewine.com.tw/Upload/20251107/1895%20verga%20la%20storia%20barolo.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/0f10de85c16c.png" alt="1895 Verga La Storia Barolo" loading="lazy" /></a></td></tr>
+        <tr data-market="大全聯"><td><span class="tag">大全聯</span></td><td><a href="https://littlewine.com.tw/wine/Detail.aspx?Title=%e8%bc%95%e6%9f%94%e5%9c%93%e6%bb%91%e7%9a%84%e7%be%a9%e5%a4%a7%e5%88%a9%e6%b7%b7%e9%87%80&Wine=Canaja+Gold+Rosso+Veronese" target="_blank" rel="noopener noreferrer">Canaja Gold Rosso Veronese</a></td><td>Veneto</td><td>義大利</td><td>混釀(100%)</td><td>14%</td><td>2018年</td><td>Villa Annaberta</td><td>1/5</td><td>3/5</td><td>5/5</td><td>3.5/5</td><td>$399</td><td><a href="https://littlewine.com.tw/Upload/20260411/canaia%20gold%20rosso%20verona%202018.png" target="_blank" rel="noopener noreferrer"><img class="thumb" src="images/0aaf7db7a659.png" alt="Canaja Gold Rosso Veronese" loading="lazy" /></a></td></tr>
         </tbody>
       </table>
     </div>
     <script>
-      const chips = Array.from(document.querySelectorAll('.chip'));
+      const filterChips = Array.from(document.querySelectorAll('.chip[data-market]'));
+      const sortChips = Array.from(document.querySelectorAll('.sort-chip'));
       const items = Array.from(document.querySelectorAll('tr[data-market]'));
+      const tbody = document.querySelector('tbody');
       const visibleCountEl = document.getElementById('visible-count');
+      let currentMarket = 'ALL';
+
+      function parseRating(text) {
+        const match = (text || '').match(/([0-5](?:\.5)?)/);
+        return match ? Number(match[1]) : -1;
+      }
+
+      function parsePrice(text) {
+        const digits = (text || '').replace(/[^\d]/g, '');
+        return digits ? Number(digits) : -1;
+      }
+
+      function sortRows(mode) {
+        const sorted = [...items].sort((a, b) => {
+          const aCells = a.querySelectorAll('td');
+          const bCells = b.querySelectorAll('td');
+          const aTitle = aCells[1]?.innerText || '';
+          const bTitle = bCells[1]?.innerText || '';
+
+          if (mode === 'price') {
+            const aPrice = parsePrice(aCells[12]?.innerText || '');
+            const bPrice = parsePrice(bCells[12]?.innerText || '');
+            if (aPrice !== bPrice) return bPrice - aPrice;
+            return aTitle.localeCompare(bTitle, 'zh-Hant');
+          }
+
+          const aRating = parseRating(aCells[11]?.innerText || '');
+          const bRating = parseRating(bCells[11]?.innerText || '');
+          if (aRating !== bRating) return bRating - aRating;
+
+          const aPrice = parsePrice(aCells[12]?.innerText || '');
+          const bPrice = parsePrice(bCells[12]?.innerText || '');
+          if (aPrice !== bPrice) return bPrice - aPrice;
+
+          return aTitle.localeCompare(bTitle, 'zh-Hant');
+        });
+
+        if (tbody) sorted.forEach((row) => tbody.appendChild(row));
+      }
+
       function filterBy(market) {
+        currentMarket = market;
         let visible = 0;
         items.forEach((item) => {
           const show = market === 'ALL' || item.dataset.market === market;
@@ -77,13 +127,26 @@
         });
         if (visibleCountEl) visibleCountEl.textContent = String(visible);
       }
-      chips.forEach((chip) => {
+
+      filterChips.forEach((chip) => {
         chip.addEventListener('click', () => {
-          chips.forEach((c) => c.classList.remove('active'));
+          filterChips.forEach((c) => c.classList.remove('active'));
           chip.classList.add('active');
           filterBy(chip.dataset.market || 'ALL');
         });
       });
+
+      sortChips.forEach((chip) => {
+        chip.addEventListener('click', () => {
+          sortChips.forEach((c) => c.classList.remove('active'));
+          chip.classList.add('active');
+          sortRows(chip.dataset.sort || 'rating');
+          filterBy(currentMarket);
+        });
+      });
+
+      sortRows('rating');
+      filterBy('ALL');
     </script>
   </body>
 </html>

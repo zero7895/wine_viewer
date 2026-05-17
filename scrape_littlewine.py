@@ -301,6 +301,78 @@ def extract_by_labels(text: str, labels: list[str]) -> str:
     return ""
 
 
+def rating_from_score_classes(classes: str) -> str:
+    """Convert score class to rating text, e.g. score3half -> 3.5/5."""
+    if not classes:
+        return ""
+
+    match = re.search(r"\bscore([0-5])(half)?\b", classes)
+    if not match:
+        return ""
+
+    base = int(match.group(1))
+    value = base + (0.5 if match.group(2) else 0.0)
+    return f"{value:g}/5"
+
+
+async def extract_score_from_area(page: Page, area_selectors: list[str]) -> str:
+    """Find score class under area selectors, e.g. .starArea/.sweetArea."""
+    for selector in area_selectors:
+        area = page.locator(selector)
+        area_count = await area.count()
+        if area_count == 0:
+            continue
+
+        for idx in range(area_count):
+            cls = (await area.nth(idx).get_attribute("class")) or ""
+            rating = rating_from_score_classes(cls)
+            if rating:
+                return rating
+
+            score_nodes = area.nth(idx).locator("[class*='score']")
+            for j in range(await score_nodes.count()):
+                inner_cls = (await score_nodes.nth(j).get_attribute("class")) or ""
+                rating = rating_from_score_classes(inner_cls)
+                if rating:
+                    return rating
+
+    return ""
+
+
+def extract_score_near_labels_from_html(html: str, labels: list[str], window: int = 500) -> str:
+    """Extract score class near a text label from raw HTML."""
+    if not html:
+        return ""
+
+    for label in labels:
+        for m in re.finditer(re.escape(label), html, flags=re.IGNORECASE):
+            start = max(0, m.start() - window)
+            end = min(len(html), m.end() + window)
+            snippet = html[start:end]
+            score_match = re.search(r"\bscore([0-5])(half)?\b", snippet, flags=re.IGNORECASE)
+            if score_match:
+                base = int(score_match.group(1))
+                value = base + (0.5 if score_match.group(2) else 0.0)
+                return f"{value:g}/5"
+    return ""
+
+
+def extract_degree_score_by_label(html: str, label: str) -> str:
+    """Extract scoreN/scoreNhalf from detail block like: <span>甜度</span> ... <section class='degreeArea score1'>."""
+    if not html or not label:
+        return ""
+
+    pattern = (
+        rf"<span[^>]*>\s*{re.escape(label)}\s*</span>"
+        rf"[\s\S]{{0,500}}?"
+        rf"<section[^>]*class=[\"'][^\"']*degreeArea[^\"']*\b(score[0-5](?:half)?)\b[^\"']*[\"']"
+    )
+    match = re.search(pattern, html, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return rating_from_score_classes(match.group(1))
+
+
 def parse_wine_meta_from_text(text: str) -> dict[str, str]:
     region = extract_by_patterns(
         text,
@@ -535,17 +607,49 @@ async def enrich_wine_details(browser: Browser, items: list[WineLink]) -> list[W
                 if image_url:
                     image_url = urljoin(BASE_URL, image_url)
 
-                # 星等優先用 DOM: class="icon-star" 計數
-                star_count = await page.locator(".icon-star").count()
-                dom_rating = f"{star_count}/5" if star_count > 0 else ""
+                # 星等/甜度/酸度/飽滿度優先從各區塊的 score class 解析。
+                dom_rating = await extract_score_from_area(page, [".starArea"])
+                dom_sweetness = await extract_score_from_area(page, [".sweetArea", ".sweetnessArea"])
+                dom_acidity = await extract_score_from_area(page, [".acidArea", ".acidityArea"])
+                dom_body = await extract_score_from_area(page, [".bodyArea", ".fullArea"])
+
+                # 優先抓商品屬性區塊的 degreeArea score。
+                if not dom_sweetness:
+                    dom_sweetness = extract_degree_score_by_label(page_html, "甜度")
+                if not dom_acidity:
+                    dom_acidity = extract_degree_score_by_label(page_html, "酸度")
+                if not dom_body:
+                    dom_body = extract_degree_score_by_label(page_html, "飽滿度")
+
+                # 後備：若站台 class 名稱不同，從標籤附近 HTML 補抓 score* class。
+                if not dom_sweetness:
+                    dom_sweetness = extract_score_near_labels_from_html(page_html, ["甜度", "Sweetness"])
+                if not dom_acidity:
+                    dom_acidity = extract_score_near_labels_from_html(page_html, ["酸度", "Acidity"])
+                if not dom_body:
+                    dom_body = extract_score_near_labels_from_html(page_html, ["飽滿度", "Body"])
+
+                # 後備：若沒有 score class，再用 icon-star 數量推估
+                if not dom_rating:
+                    star_count = await page.locator(".icon-star").count()
+                    dom_rating = f"{star_count}/5" if star_count > 0 else ""
             except Exception:
                 body_text = ""
                 image_url = ""
                 dom_rating = ""
+                dom_sweetness = ""
+                dom_acidity = ""
+                dom_body = ""
 
             meta = parse_wine_meta_from_text(body_text)
             if dom_rating:
                 meta["rating"] = dom_rating
+            if dom_sweetness:
+                meta["sweetness"] = dom_sweetness
+            if dom_acidity:
+                meta["acidity"] = dom_acidity
+            if dom_body:
+                meta["body"] = dom_body
             print(
                 "[DETAIL]"
                 f" region={meta['region'] or '-'}"
@@ -703,7 +807,8 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       }}
       h1 {{ margin-bottom: 0.25rem; }}
       p.meta {{ color: #555; margin-top: 0; }}
-      .toolbar {{ margin: 10px 0 16px; display: flex; gap: 8px; flex-wrap: wrap; }}
+      .toolbar {{ margin: 10px 0 16px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; align-items: center; }}
+      .toolbar-left, .toolbar-right {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
       .chip {{ border: 1px solid #114488; background: #fff; color: #114488; border-radius: 16px; padding: 4px 10px; cursor: pointer; }}
       .chip.active {{ background: #114488; color: #fff; }}
       .table-wrap {{ overflow-x: auto; border: 1px solid #dbe5f3; border-radius: 10px; }}
@@ -721,8 +826,14 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
     <h1>littlewine 紅酒（大全聯 / 全聯）連結清單</h1>
     <p class=\"meta\">目前顯示 <span id=\"visible-count\">{len(items)}</span> / 全部 <span id=\"total-count\">{len(items)}</span> 筆</p>
     <div class=\"toolbar\">
-      <button class=\"chip active\" data-market=\"ALL\">全部</button>
+      <div class=\"toolbar-left\">
+        <button class=\"chip active\" data-market=\"ALL\">全部</button>
 {chips}
+      </div>
+      <div class=\"toolbar-right\">
+        <button class=\"chip sort-chip active\" data-sort=\"rating\">星等高到低</button>
+        <button class=\"chip sort-chip\" data-sort=\"price\">參考價高到低</button>
+      </div>
     </div>
     <div class="table-wrap">
       <table>
@@ -750,10 +861,53 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       </table>
     </div>
     <script>
-      const chips = Array.from(document.querySelectorAll('.chip'));
+      const filterChips = Array.from(document.querySelectorAll('.chip[data-market]'));
+      const sortChips = Array.from(document.querySelectorAll('.sort-chip'));
       const items = Array.from(document.querySelectorAll('tr[data-market]'));
+      const tbody = document.querySelector('tbody');
       const visibleCountEl = document.getElementById('visible-count');
+      let currentMarket = 'ALL';
+
+      function parseRating(text) {{
+        const match = (text || '').match(/([0-5](?:\.5)?)/);
+        return match ? Number(match[1]) : -1;
+      }}
+
+      function parsePrice(text) {{
+        const digits = (text || '').replace(/[^\d]/g, '');
+        return digits ? Number(digits) : -1;
+      }}
+
+      function sortRows(mode) {{
+        const sorted = [...items].sort((a, b) => {{
+          const aCells = a.querySelectorAll('td');
+          const bCells = b.querySelectorAll('td');
+          const aTitle = aCells[1]?.innerText || '';
+          const bTitle = bCells[1]?.innerText || '';
+
+          if (mode === 'price') {{
+            const aPrice = parsePrice(aCells[12]?.innerText || '');
+            const bPrice = parsePrice(bCells[12]?.innerText || '');
+            if (aPrice !== bPrice) return bPrice - aPrice;
+            return aTitle.localeCompare(bTitle, 'zh-Hant');
+          }}
+
+          const aRating = parseRating(aCells[11]?.innerText || '');
+          const bRating = parseRating(bCells[11]?.innerText || '');
+          if (aRating !== bRating) return bRating - aRating;
+
+          const aPrice = parsePrice(aCells[12]?.innerText || '');
+          const bPrice = parsePrice(bCells[12]?.innerText || '');
+          if (aPrice !== bPrice) return bPrice - aPrice;
+
+          return aTitle.localeCompare(bTitle, 'zh-Hant');
+        }});
+
+        if (tbody) sorted.forEach((row) => tbody.appendChild(row));
+      }}
+
       function filterBy(market) {{
+        currentMarket = market;
         let visible = 0;
         items.forEach((item) => {{
           const show = market === 'ALL' || item.dataset.market === market;
@@ -762,13 +916,26 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
         }});
         if (visibleCountEl) visibleCountEl.textContent = String(visible);
       }}
-      chips.forEach((chip) => {{
+
+      filterChips.forEach((chip) => {{
         chip.addEventListener('click', () => {{
-          chips.forEach((c) => c.classList.remove('active'));
+          filterChips.forEach((c) => c.classList.remove('active'));
           chip.classList.add('active');
           filterBy(chip.dataset.market || 'ALL');
         }});
       }});
+
+      sortChips.forEach((chip) => {{
+        chip.addEventListener('click', () => {{
+          sortChips.forEach((c) => c.classList.remove('active'));
+          chip.classList.add('active');
+          sortRows(chip.dataset.sort || 'rating');
+          filterBy(currentMarket);
+        }});
+      }});
+
+      sortRows('rating');
+      filterBy('ALL');
     </script>
   </body>
 </html>
