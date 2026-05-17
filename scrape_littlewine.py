@@ -734,6 +734,13 @@ def load_cached_items(output_path: Path) -> dict[tuple[str, str], WineLink]:
     return cache
 
 
+def load_items_from_json(input_path: Path) -> list[WineLink]:
+    """Load full item list from JSON output for render-only mode."""
+    cache = load_cached_items(input_path)
+    items = list(cache.values())
+    return sorted(items, key=lambda x: (x.market, x.title))
+
+
 def merge_with_current_item(current: WineLink, cached: WineLink) -> WineLink:
     """Keep current market/title/url, reuse parsed detail fields from cache."""
     return WineLink(
@@ -842,12 +849,16 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
     items = sorted(items, key=lambda x: (_rating_value(x.rating), _price_value(x.reference_price), x.title), reverse=True)
 
     markets = sorted({item.market for item in items})
+    countries = sorted({item.country for item in items if item.country})
     chips = "\n".join(
         f'      <button class="chip" data-market="{market}">{market}</button>' for market in markets
     )
+    country_chips = "\n".join(
+        f'      <button class="chip country-chip" data-country="{country}">{country}</button>' for country in countries
+    )
     rows = "\n".join(
         (
-            f'        <tr data-market="{item.market}" data-rating="{item.rating or ""}" data-price="{item.reference_price or ""}">'
+            f'        <tr data-market="{item.market}" data-country="{item.country or ""}" data-rating="{item.rating or ""}" data-price="{item.reference_price or ""}">'
             f'<td><span class="tag">{item.market}</span></td>'
             f'<td><a href="{item.url}" target="_blank" rel="noopener noreferrer">{item.title}</a></td>'
             f'<td>{item.country or "-"}</td>'
@@ -886,6 +897,7 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       p.meta {{ color: #555; margin-top: 0; }}
       .toolbar {{ margin: 10px 0 16px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; align-items: center; }}
       .toolbar-left, .toolbar-right {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
+      .toolbar-stack {{ display: flex; flex-direction: column; gap: 8px; width: 100%; }}
       .chip {{ border: 1px solid #114488; background: #fff; color: #114488; border-radius: 16px; padding: 4px 10px; cursor: pointer; }}
       .chip.active {{ background: #114488; color: #fff; }}
       .table-wrap {{ overflow-x: auto; border: 1px solid #dbe5f3; border-radius: 10px; }}
@@ -902,14 +914,22 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
   <body>
     <h1>littlewine 紅酒連結清單</h1>
     <p class=\"meta\">目前顯示 <span id=\"visible-count\">{len(items)}</span> / 全部 <span id=\"total-count\">{len(items)}</span> 筆</p>
-    <div class=\"toolbar\">
-      <div class=\"toolbar-left\">
-        <button class=\"chip active\" data-market=\"ALL\">全部</button>
+    <div class=\"toolbar-stack\">
+      <div class=\"toolbar\">
+        <div class=\"toolbar-left\">
+          <button class=\"chip market-chip active\" data-market=\"ALL\">全部</button>
 {chips}
+        </div>
+        <div class=\"toolbar-right\">
+          <button class=\"chip sort-chip active\" data-sort=\"rating\">星等高到低</button>
+          <button class=\"chip sort-chip\" data-sort=\"price\">參考價高到低</button>
+        </div>
       </div>
-      <div class=\"toolbar-right\">
-        <button class=\"chip sort-chip active\" data-sort=\"rating\">星等高到低</button>
-        <button class=\"chip sort-chip\" data-sort=\"price\">參考價高到低</button>
+      <div class=\"toolbar\">
+        <div class=\"toolbar-left\">
+          <button class=\"chip country-chip active\" data-country=\"ALL\">全部國家</button>
+{country_chips}
+        </div>
       </div>
     </div>
     <div class="table-wrap">
@@ -937,12 +957,14 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       </table>
     </div>
     <script>
-      const filterChips = Array.from(document.querySelectorAll('.chip[data-market]'));
+      const marketChips = Array.from(document.querySelectorAll('.market-chip'));
+      const countryChips = Array.from(document.querySelectorAll('.country-chip'));
       const sortChips = Array.from(document.querySelectorAll('.sort-chip'));
       const items = Array.from(document.querySelectorAll('tr[data-market]'));
       const tbody = document.querySelector('tbody');
       const visibleCountEl = document.getElementById('visible-count');
       let currentMarket = 'ALL';
+      let currentCountry = 'ALL';
 
       function parseRating(text) {{
         const match = (text || '').match(/([0-5](?:\.\d+)?)/);
@@ -982,22 +1004,33 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
         if (tbody) sorted.forEach((row) => tbody.appendChild(row));
       }}
 
-      function filterBy(market) {{
+      function filterBy(market, country) {{
         currentMarket = market;
+        currentCountry = country;
         let visible = 0;
         items.forEach((item) => {{
-          const show = market === 'ALL' || item.dataset.market === market;
+          const marketOk = market === 'ALL' || item.dataset.market === market;
+          const countryOk = country === 'ALL' || item.dataset.country === country;
+          const show = marketOk && countryOk;
           item.style.display = show ? '' : 'none';
           if (show) visible += 1;
         }});
         if (visibleCountEl) visibleCountEl.textContent = String(visible);
       }}
 
-      filterChips.forEach((chip) => {{
+      marketChips.forEach((chip) => {{
         chip.addEventListener('click', () => {{
-          filterChips.forEach((c) => c.classList.remove('active'));
+          marketChips.forEach((c) => c.classList.remove('active'));
           chip.classList.add('active');
-          filterBy(chip.dataset.market || 'ALL');
+          filterBy(chip.dataset.market || 'ALL', currentCountry);
+        }});
+      }});
+
+      countryChips.forEach((chip) => {{
+        chip.addEventListener('click', () => {{
+          countryChips.forEach((c) => c.classList.remove('active'));
+          chip.classList.add('active');
+          filterBy(currentMarket, chip.dataset.country || 'ALL');
         }});
       }});
 
@@ -1006,12 +1039,12 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
           sortChips.forEach((c) => c.classList.remove('active'));
           chip.classList.add('active');
           sortRows(chip.dataset.sort || 'rating');
-          filterBy(currentMarket);
+          filterBy(currentMarket, currentCountry);
         }});
       }});
 
       sortRows('rating');
-      filterBy('ALL');
+      filterBy('ALL', 'ALL');
     </script>
   </body>
 </html>
@@ -1114,6 +1147,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Force re-parse all detail pages and ignore JSON cache",
     )
+    parser.add_argument(
+        "--render-only",
+        action="store_true",
+        help="Only render HTML from existing JSON cache, do not scrape or download",
+    )
+    parser.add_argument(
+        "--input-json",
+        type=str,
+        default=JSON_OUTPUT,
+        help="JSON file used by --render-only (default: littlewine_red_pxmart_links.json)",
+    )
     return parser.parse_args()
 
 
@@ -1163,6 +1207,16 @@ def download_images(items: list[WineLink], output_dir: Path) -> list[WineLink]:
 
 def main() -> None:
     args = parse_args()
+
+    if args.render_only:
+        input_path = Path(args.input_json)
+        items = load_items_from_json(input_path)
+        if not items:
+            raise SystemExit(f"No items found in {input_path}. Run scraping first or provide a valid JSON file.")
+        write_html(items, Path(HTML_OUTPUT))
+        print(f"Done. Rendered {len(items)} items to {HTML_OUTPUT} from {input_path}")
+        return
+
     try:
         markets = parse_markets_arg(args.markets)
     except ValueError as exc:
