@@ -33,8 +33,10 @@ python -m playwright install chromium</code></pre>
 
   <h2>常用指令</h2>
   <ul>
+    <li><code>python scrape_littlewine.py</code></li>
     <li><code>python scrape_littlewine.py --refresh</code></li>
     <li><code>python scrape_littlewine.py --render-only</code></li>
+    <li><code>python scrape_littlewine.py --headed</code></li>
     <li><code>python scrape_littlewine.py --markets "全聯,家樂福"</code></li>
     <li><code>python scrape_littlewine.py --limit 3</code></li>
   </ul>
@@ -48,5 +50,13 @@ python -m playwright install chromium</code></pre>
   </ol>
 
   <p>網址格式：<code>https://&lt;你的帳號&gt;.github.io/&lt;repo名稱&gt;/</code></p>
+  <p>此 repo（<code>https://github.com/zero7895/wine_viewer</code>）實際網址：<code>https://zero7895.github.io/wine_viewer/</code></p>
+
+  <h2>首次上線（最短流程）</h2>
+  <pre><code>python scrape_littlewine.py
+git add docs README.md README.html scrape_littlewine.py
+git commit -m "prepare GitHub Pages output"
+git push</code></pre>
+  <p>然後到 <code>Settings -&gt; Pages</code> 設定 <code>main</code> + <code>/docs</code>。</p>
 </body>
 </html>

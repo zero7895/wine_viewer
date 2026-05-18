@@ -843,6 +843,15 @@ def write_json(items: list[WineLink], output_path: Path) -> None:
 
 def write_html(items: list[WineLink], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _is_valid_country(raw: str) -> bool:
+        value = (raw or "").strip()
+        if not value:
+            return False
+        if re.fullmatch(r"\d{4}", value):
+            return False
+        return True
+
     def _rating_value(raw: str) -> float:
         m = re.search(r"([0-5](?:\.\d+)?)", raw or "")
         return float(m.group(1)) if m else -1.0
@@ -855,19 +864,19 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
     items = sorted(items, key=lambda x: (_rating_value(x.rating), _price_value(x.reference_price), x.title), reverse=True)
 
     markets = sorted({item.market for item in items})
-    countries = sorted({item.country for item in items if item.country})
+    countries = sorted({item.country for item in items if _is_valid_country(item.country)})
     chips = "\n".join(
-        f'      <button class="chip" data-market="{market}">{market}</button>' for market in markets
+        f'      <button class="chip market-chip" data-market="{market}">{market}</button>' for market in markets
     )
     country_chips = "\n".join(
         f'      <button class="chip country-chip" data-country="{country}">{country}</button>' for country in countries
     )
     rows = "\n".join(
         (
-            f'        <tr data-market="{item.market}" data-country="{item.country or ""}" data-rating="{item.rating or ""}" data-price="{item.reference_price or ""}">'
+            f'        <tr data-market="{item.market}" data-country="{item.country if _is_valid_country(item.country) else ""}" data-rating="{item.rating or ""}" data-price="{item.reference_price or ""}">'
             f'<td><span class="tag">{item.market}</span></td>'
             f'<td><a href="{item.url}" target="_blank" rel="noopener noreferrer">{item.title}</a></td>'
-            f'<td>{item.country or "-"}</td>'
+            f'<td>{item.country if _is_valid_country(item.country) else "-"}</td>'
             f'<td>{item.region or "-"}</td>'
             f'<td>{item.grape or "-"}</td>'
             f'<td>{item.abv or "-"}</td>'
@@ -906,6 +915,8 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       .toolbar-stack {{ display: flex; flex-direction: column; gap: 8px; width: 100%; }}
       .chip {{ border: 1px solid #114488; background: #fff; color: #114488; border-radius: 16px; padding: 4px 10px; cursor: pointer; }}
       .chip.active {{ background: #114488; color: #fff; }}
+      .country-chip {{ border-color: #e9b980; color: #9a5e1a; background: #fff9f2; }}
+      .country-chip.active {{ background: #f3c48a; border-color: #e2ad68; color: #5e3a10; }}
       .table-wrap {{ overflow-x: auto; border: 1px solid #dbe5f3; border-radius: 10px; }}
       table {{ width: 100%; border-collapse: collapse; min-width: 1400px; }}
       th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e9eef7; vertical-align: top; }}
@@ -933,7 +944,7 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       </div>
       <div class=\"toolbar\">
         <div class=\"toolbar-left\">
-          <button class=\"chip country-chip active\" data-country=\"ALL\">全部國家</button>
+          <button class=\"chip country-chip active\" data-country=\"ALL\">全部</button>
 {country_chips}
         </div>
       </div>

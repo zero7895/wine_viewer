@@ -69,6 +69,21 @@ python scrape_littlewine.py
 
 - `https://<你的帳號>.github.io/<repo名稱>/`
 
+這個 repo（`https://github.com/zero7895/wine_viewer`）對應的網址是：
+
+- `https://zero7895.github.io/wine_viewer/`
+
+## 首次上線（最短流程）
+
+```bash
+python scrape_littlewine.py
+git add docs README.md README.html scrape_littlewine.py
+git commit -m "prepare GitHub Pages output"
+git push
+```
+
+然後到 GitHub 設定 `Settings -> Pages`，選 `main` + `/docs`。
+
 ## 更新網站流程
 
 ```bash
