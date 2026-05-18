@@ -39,14 +39,42 @@ python -m playwright install chromium
 python scrape_littlewine.py
 ```
 
+## 三種主要模式
+
+### 1) 只改 HTML UI（不重抓資料）
+
+```bash
+python scrape_littlewine.py --render-only
+```
+
+### 2) 抓 littlewine 資料（每賣場 N 筆）
+
+```bash
+python scrape_littlewine.py --limit 3
+```
+
+- `--limit N` 會只抓 littlewine（不查 Vivino）
+- 可搭配 `--markets "全聯,家樂福"`
+
+### 3) 用既有資料補 Vivino 分數（只補缺少的）
+
+```bash
+python scrape_littlewine.py --vivino-only
+```
+
+- 會用既有 JSON（預設 `docs/data/littlewine_red_pxmart_links.json`）
+- 只查沒有快取過的項目，查過會存到 `docs/data/vivino_cache.json`
+- 可先小量測試：`python scrape_littlewine.py --vivino-only --vivino-limit-per-market 3`
+- 強制重查 Vivino：`python scrape_littlewine.py --vivino-only --refresh-vivino`
+
 ## 常用指令
 
-- 更新資料（一般使用）：`python scrape_littlewine.py`
-- 強制全部重抓：`python scrape_littlewine.py --refresh`
-- 只重生 HTML（不重抓資料、不下載圖片）：`python scrape_littlewine.py --render-only`
+- 全流程（抓 littlewine + 查 Vivino）：`python scrape_littlewine.py`
+- 強制重抓 littlewine：`python scrape_littlewine.py --refresh`
+- 只重生 HTML：`python scrape_littlewine.py --render-only`
+- 只查 Vivino：`python scrape_littlewine.py --vivino-only`
+- 只查 Vivino（每賣場前 3 筆）：`python scrape_littlewine.py --vivino-only --vivino-limit-per-market 3`
 - 顯示瀏覽器（除錯）：`python scrape_littlewine.py --headed`
-- 指定賣場：`python scrape_littlewine.py --markets "全聯,家樂福"`
-- 每賣場只抓前 N 筆：`python scrape_littlewine.py --limit 3`
 
 ## 參數
 
@@ -56,6 +84,9 @@ python scrape_littlewine.py
 - `--refresh`
 - `--render-only`
 - `--input-json PATH`（預設：`docs/data/littlewine_red_pxmart_links.json`）
+- `--vivino-only`
+- `--vivino-limit-per-market N`
+- `--refresh-vivino`
 
 ## GitHub Pages 部署
 

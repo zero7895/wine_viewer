@@ -33,12 +33,16 @@ python -m playwright install chromium</code></pre>
 
   <h2>常用指令</h2>
   <ul>
-    <li><code>python scrape_littlewine.py</code></li>
+    <li><code>python scrape_littlewine.py</code>（全流程：抓 littlewine + 查 Vivino）</li>
+    <li><code>python scrape_littlewine.py --render-only</code>（只改 HTML UI）</li>
+    <li><code>python scrape_littlewine.py --limit 3</code>（每賣場抓 3 筆，只抓 littlewine）</li>
+    <li><code>python scrape_littlewine.py --vivino-only</code>（用既有資料補 Vivino）</li>
+    <li><code>python scrape_littlewine.py --vivino-only --vivino-limit-per-market 3</code>（先小量測試）</li>
+    <li><code>python scrape_littlewine.py --vivino-only --refresh-vivino</code>（強制重查 Vivino）</li>
     <li><code>python scrape_littlewine.py --refresh</code></li>
     <li><code>python scrape_littlewine.py --render-only</code></li>
     <li><code>python scrape_littlewine.py --headed</code></li>
     <li><code>python scrape_littlewine.py --markets "全聯,家樂福"</code></li>
-    <li><code>python scrape_littlewine.py --limit 3</code></li>
   </ul>
 
   <h2>GitHub Pages 部署</h2>

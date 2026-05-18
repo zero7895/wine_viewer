@@ -6,14 +6,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import html
 import hashlib
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
-from urllib.request import urlretrieve
-from urllib.parse import urljoin
+from urllib.request import Request, urlopen, urlretrieve
+from urllib.parse import quote_plus, unquote_plus, urljoin
 
 from playwright.async_api import Browser, Page, TimeoutError, async_playwright
 
@@ -24,6 +25,7 @@ DATA_DIR = OUTPUT_DIR / "data"
 HTML_OUTPUT = OUTPUT_DIR / "index.html"
 CSV_OUTPUT = DATA_DIR / "littlewine_red_pxmart_links.csv"
 JSON_OUTPUT = DATA_DIR / "littlewine_red_pxmart_links.json"
+VIVINO_CACHE_OUTPUT = DATA_DIR / "vivino_cache.json"
 IMAGE_DIR = OUTPUT_DIR / "images"
 IMAGE_WEB_PREFIX = "images"
 ALL_MARKETS = ["大全聯", "全聯", "好市多", "家樂福", "美廉社", "大潤發", "愛買"]
@@ -45,6 +47,7 @@ class WineLink:
     body: str = ""
     rating: str = ""
     reference_price: str = ""
+    vivino_rating: str = ""
     image_url: str = ""
     image_path: str = ""
 
@@ -529,6 +532,400 @@ def score_image_candidate(url: str) -> int:
     return score
 
 
+def parse_year(value: str) -> int | None:
+    if not value:
+        return None
+    m = re.search(r"(19|20)\d{2}", value)
+    return int(m.group(0)) if m else None
+
+
+def normalize_vivino_key(title: str, winery: str) -> str:
+    raw = f"{title} {winery}".strip().lower()
+    raw = re.sub(r"\s+", " ", raw)
+    return raw
+
+
+def load_vivino_cache(cache_path: Path) -> dict[str, str]:
+    if not cache_path.exists():
+        return {}
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+
+    cache: dict[str, str] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str):
+            continue
+        if isinstance(value, dict):
+            cache[key] = str(value.get("rating", "") or "").strip() or "-"
+        else:
+            cache[key] = str(value or "").strip() or "-"
+    return cache
+
+
+def save_vivino_cache(cache_path: Path, cache: dict[str, str]) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def fetch_first_vivino_result_from_duckduckgo(query: str) -> tuple[str, str]:
+    """Return (first vivino url, rating) from DuckDuckGo HTML results."""
+    url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urlopen(req, timeout=20) as resp:
+        text = resp.read().decode("utf-8", "ignore")
+
+    for m in re.finditer(r"<div class=\"result\"[\s\S]{0,4000}?<\/div>\s*<\/div>", text, flags=re.IGNORECASE):
+        block = m.group(0)
+        link_match = re.search(r'nofollow" class="result__a" href="([^"]+)"', block)
+        if not link_match:
+            continue
+        href = html.unescape(link_match.group(1))
+        target = href
+        m2 = re.search(r"uddg=([^&]+)", href)
+        if m2:
+            target = unquote_plus(m2.group(1))
+        if "vivino.com" not in target.lower() or not target.startswith("http"):
+            continue
+
+        rating = ""
+        # e.g. "4.1(1,020)" or "4.1 / 5"
+        rm = re.search(r"\b([2-4]\.\d)\s*\(\s*[\d,，\.]+\s*\)", block)
+        if rm:
+            rating = rm.group(1)
+        else:
+            rm = re.search(r"\b([2-4](?:\.\d)?)\s*/\s*5\b", block)
+            if rm:
+                rating = rm.group(1)
+        return target, rating
+
+    for m in re.finditer(r'nofollow" class="result__a" href="([^"]+)"', text):
+        href = html.unescape(m.group(1))
+        target = href
+        m2 = re.search(r"uddg=([^&]+)", href)
+        if m2:
+            target = unquote_plus(m2.group(1))
+        if "vivino.com" in target.lower() and target.startswith("http"):
+            return target, ""
+    return "", ""
+
+
+async def fetch_vivino_rating(page: Page, item: WineLink) -> str:
+    query = " ".join([p for p in ["vivino", item.winery, item.title] if p]).strip()
+    if not query:
+        return "-"
+
+    search_url = f"https://www.google.com/search?gbv=1&hl=zh-TW&num=10&q={quote_plus(query)}"
+    try:
+        print(f"[VIVINO] url: {search_url}")
+        await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+        # Google 同意頁有時會擋住搜尋結果，嘗試自動同意。
+        for label in ["我同意", "接受全部", "Accept all", "I agree"]:
+            btn = page.get_by_role("button", name=label)
+            if await btn.count() > 0:
+                try:
+                    await btn.first.click(timeout=1500)
+                    await page.wait_for_timeout(1200)
+                    break
+                except Exception:
+                    pass
+        await page.wait_for_timeout(1800)
+    except Exception:
+        return "-"
+
+    def _pick_rating_from_text(text: str) -> str:
+        m = re.search(r"\b([2-4](?:[\.,]\d)?)\s*/\s*5\b", text)
+        if m:
+            return m.group(1).replace(",", ".")
+        # Google snippet 常見格式：4.1(1,020)
+        m = re.search(r"\b([2-4][\.,]\d)\s*\(\s*[\d,\.，]+\s*\)", text)
+        if m:
+            return m.group(1).replace(",", ".")
+        for m in re.finditer(r"\b([2-4][\.,]\d)\b", text):
+            try:
+                f = float(m.group(1).replace(",", "."))
+            except ValueError:
+                continue
+            if 2.0 <= f <= 4.9:
+                return f"{f:g}"
+        return ""
+
+    page_title = (await page.title() or "").strip()
+    if "Google" not in page_title and "google" not in page_title:
+        print(f"[VIVINO] google page title: {page_title}")
+
+    # 優先：直接從 Google 結果區塊抓分數（不必進 Vivino 頁面）。
+    result_blocks = page.locator("div.g, div[data-sokoban-container], div[data-hveid]")
+    block_count = min(await result_blocks.count(), 40)
+    for i in range(block_count):
+        text = (await result_blocks.nth(i).inner_text() or "").strip()
+        if "vivino" not in text.lower():
+            continue
+        rating = _pick_rating_from_text(text)
+        if rating:
+            print(f"[VIVINO] google snippet hit: {rating}")
+            return rating
+
+    # 後備 1：直接從整頁文字抓「Vivino ... 4.x(數量)」片段。
+    body_text = (await page.inner_text("body") or "").strip()
+    m = re.search(r"vivino[\s\S]{0,220}?\b([2-4]\.\d)\s*\(\s*[\d,]+\s*\)", body_text, flags=re.IGNORECASE)
+    if m:
+        print(f"[VIVINO] google body hit: {m.group(1)}")
+        return m.group(1)
+
+    # 後備 1.5：從 HTML 抓同型態片段（有時 inner_text 拿不到）。
+    html = (await page.content() or "")
+    m = re.search(r"vivino[\s\S]{0,260}?\b([2-4]\.\d)\s*\(\s*[\d,]+\s*\)", html, flags=re.IGNORECASE)
+    if m:
+        print(f"[VIVINO] google html hit: {m.group(1)}")
+        return m.group(1)
+
+    # 後備 2：若 Google 首頁被擋，改抓文字鏡像內容再解析。
+    try:
+        mirror_url = f"https://r.jina.ai/http://www.google.com/search?gbv=1&hl=zh-TW&num=10&q={quote_plus(query)}"
+        req = Request(mirror_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=20) as resp:
+            mirror_text = resp.read().decode("utf-8", "ignore")
+
+        # 先抓含 vivino 的段落，再找評分，較貼近「前幾筆 Google 結果」。
+        lines = [ln.strip() for ln in mirror_text.splitlines() if ln.strip()]
+        for i, line in enumerate(lines):
+            if "vivino" not in line.lower():
+                continue
+            window = " ".join(lines[i : i + 4])
+            m = re.search(r"\b([2-4]\.\d)\s*\(\s*[\d,，\.]+\s*\)", window)
+            if m:
+                print(f"[VIVINO] mirror window hit: {m.group(1)}")
+                return m.group(1)
+            m = re.search(r"\b([2-4](?:\.\d)?)\s*/\s*5\b", window)
+            if m:
+                print(f"[VIVINO] mirror window hit: {m.group(1)}")
+                return m.group(1)
+
+        # 再做全域後備。
+        m = re.search(r"\b([2-4]\.\d)\s*\(\s*[\d,，\.]+\s*\)", mirror_text)
+        if m:
+            print(f"[VIVINO] mirror global hit: {m.group(1)}")
+            return m.group(1)
+        m = re.search(r"\b([2-4](?:\.\d)?)\s*/\s*5\b", mirror_text)
+        if m:
+            print(f"[VIVINO] mirror global hit: {m.group(1)}")
+            return m.group(1)
+    except Exception as exc:
+        print(f"[VIVINO] mirror fetch failed: {exc}")
+
+    # Google 前五筆結果中找 vivino 網址。
+    candidates: list[str] = []
+    links = page.locator("a[href]")
+    count = min(await links.count(), 120)
+    for i in range(count):
+        href = (await links.nth(i).get_attribute("href")) or ""
+        if not href:
+            continue
+        # Google 轉址格式 /url?q=...&...
+        if href.startswith("/url?"):
+            m = re.search(r"[?&]q=([^&]+)", href)
+            if m:
+                href = unquote_plus(m.group(1))
+        if "vivino.com" in href.lower() and href.startswith("http"):
+            if href not in candidates:
+                candidates.append(href)
+        if len(candidates) >= 5:
+            break
+
+    if candidates:
+        print(f"[VIVINO] google vivino candidates: {len(candidates)}")
+        for i, url in enumerate(candidates, start=1):
+            print(f"[VIVINO] candidate {i}: {url}")
+
+        # 後備：若 snippet 抓不到，才進 Vivino 頁面找分數。
+        for vivino_url in candidates:
+            try:
+                print(f"[VIVINO] visit: {vivino_url}")
+                await page.goto(vivino_url, wait_until="domcontentloaded", timeout=30000)
+                await page.wait_for_timeout(1500)
+            except Exception:
+                continue
+
+            # 先看頁面原始 HTML 是否有結構化評分（常見於 JSON-LD）。
+            html = (await page.content() or "")
+            m = re.search(r'"ratingValue"\s*:\s*"?([2-4](?:\.\d)?)"?', html)
+            if m:
+                print(f"[VIVINO] vivino html ratingValue hit: {m.group(1)}")
+                return m.group(1)
+            m = re.search(r'"average_rating"\s*:\s*"?([2-4](?:\.\d)?)"?', html)
+            if m:
+                print(f"[VIVINO] vivino html average_rating hit: {m.group(1)}")
+                return m.group(1)
+
+            for sel in ["body", "main", "[data-testid='wine-summary']", "[class*='rating']"]:
+                loc = page.locator(sel)
+                if await loc.count() == 0:
+                    continue
+                text = (await loc.first.inner_text() or "").strip()
+                rating = _pick_rating_from_text(text)
+                if rating:
+                    return rating
+
+    # 後備 3：改用 Bing 搜尋結果文字抓 Vivino 評分。
+    try:
+        bing_url = f"https://www.bing.com/search?setlang=zh-hant&q={quote_plus(query)}"
+        req = Request(bing_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urlopen(req, timeout=20) as resp:
+            bing_html = resp.read().decode("utf-8", "ignore")
+
+        # 先找含 vivino 的區塊，再抓像 4.1(1,020) 或 4.1 / 5。
+        for m in re.finditer(r"vivino[\s\S]{0,300}", bing_html, flags=re.IGNORECASE):
+            chunk = m.group(0)
+            r = re.search(r"\b([2-4]\.\d)\s*\(\s*[\d,，\.]+\s*\)", chunk)
+            if r:
+                print(f"[VIVINO] bing snippet hit: {r.group(1)}")
+                return r.group(1)
+            r = re.search(r"\b([2-4](?:\.\d)?)\s*/\s*5\b", chunk)
+            if r:
+                print(f"[VIVINO] bing snippet hit: {r.group(1)}")
+                return r.group(1)
+    except Exception:
+        pass
+
+    # 後備 4：改用 DuckDuckGo HTML 取第一個 Vivino 連結，再進頁抓分數。
+    try:
+        ddg_url, ddg_rating = fetch_first_vivino_result_from_duckduckgo(query)
+        if ddg_url:
+            print(f"[VIVINO] ddg first vivino: {ddg_url}")
+            if ddg_rating:
+                print(f"[VIVINO] ddg snippet hit: {ddg_rating}")
+                return ddg_rating
+            await page.goto(ddg_url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(1500)
+            title = (await page.title() or "").strip()
+            if title:
+                print(f"[VIVINO] vivino page: {title}")
+
+            # 優先抓你提供的實際節點：<div class="vivinoRating_averageValue__...">4,1</div>
+            avg_loc = page.locator("div[class*='vivinoRating_averageValue']")
+            if await avg_loc.count() > 0:
+                avg_text = (await avg_loc.first.inner_text() or "").strip().replace(",", ".")
+                if re.fullmatch(r"[2-4](?:\.\d)?", avg_text):
+                    print(f"[VIVINO] ddg vivino class hit: {avg_text}")
+                    return avg_text
+
+            html_text = (await page.content() or "")
+            m = re.search(r"vivinoRating_averageValue[^>]*>\s*([2-4](?:[\.,]\d)?)\s*<", html_text)
+            if m:
+                val = m.group(1).replace(",", ".")
+                print(f"[VIVINO] ddg vivino class(html) hit: {val}")
+                return val
+            m = re.search(r'"ratingValue"\s*:\s*"?([2-4](?:\.\d)?)"?', html_text)
+            if m:
+                print(f"[VIVINO] ddg vivino ratingValue hit: {m.group(1)}")
+                return m.group(1)
+            m = re.search(r'"average_rating"\s*:\s*"?([2-4](?:\.\d)?)"?', html_text)
+            if m:
+                print(f"[VIVINO] ddg vivino average_rating hit: {m.group(1)}")
+                return m.group(1)
+            text = (await page.inner_text("body") or "").strip()
+            rating = _pick_rating_from_text(text)
+            if rating:
+                print(f"[VIVINO] ddg vivino text hit: {rating}")
+                return rating
+
+            # 最後後備：用文字鏡像抓 Vivino 頁內容再解析。
+            mirror_vivino = f"https://r.jina.ai/http://{ddg_url.replace('https://', '').replace('http://', '')}"
+            req = Request(mirror_vivino, headers={"User-Agent": "Mozilla/5.0"})
+            with urlopen(req, timeout=20) as resp:
+                mirror_text = resp.read().decode("utf-8", "ignore")
+            mirror_rating = _pick_rating_from_text(mirror_text)
+            if mirror_rating:
+                print(f"[VIVINO] ddg mirror vivino hit: {mirror_rating}")
+                return mirror_rating
+    except Exception:
+        pass
+
+    return "-"
+
+
+async def enrich_vivino_ratings(
+    browser: Browser,
+    items: list[WineLink],
+    cache_path: Path,
+    refresh_vivino: bool = False,
+) -> list[WineLink]:
+    cache = {} if refresh_vivino else load_vivino_cache(cache_path)
+    page = await browser.new_page(viewport={"width": 1366, "height": 900})
+    updated: list[WineLink] = []
+    cache_updated = False
+
+    try:
+        total = len(items)
+        for idx, item in enumerate(items, start=1):
+            key = normalize_vivino_key(item.title, item.winery)
+            rating = cache.get(key, "")
+            print(f"[VIVINO] ({idx}/{total}) {item.title} / {item.winery or '-'}")
+            if rating:
+                print(f"[VIVINO] cache: {rating}")
+                print()
+                updated.append(
+                    WineLink(
+                        market=item.market,
+                        title=item.title,
+                        url=item.url,
+                        region=item.region,
+                        country=item.country,
+                        grape=item.grape,
+                        abv=item.abv,
+                        vintage=item.vintage,
+                        winery=item.winery,
+                        sweetness=item.sweetness,
+                        acidity=item.acidity,
+                        body=item.body,
+                        rating=item.rating,
+                        reference_price=item.reference_price,
+                        vivino_rating=rating,
+                        image_url=item.image_url,
+                        image_path=item.image_path,
+                    )
+                )
+                continue
+
+            rating = await fetch_vivino_rating(page, item)
+            print(f"[VIVINO] result: {rating or '-'}")
+            print()
+            cache[key] = rating or "-"
+            cache_updated = True
+            updated.append(
+                WineLink(
+                    market=item.market,
+                    title=item.title,
+                    url=item.url,
+                    region=item.region,
+                    country=item.country,
+                    grape=item.grape,
+                    abv=item.abv,
+                    vintage=item.vintage,
+                    winery=item.winery,
+                    sweetness=item.sweetness,
+                    acidity=item.acidity,
+                    body=item.body,
+                    rating=item.rating,
+                    reference_price=item.reference_price,
+                    vivino_rating=rating or "-",
+                    image_url=item.image_url,
+                    image_path=item.image_path,
+                )
+            )
+    finally:
+        await page.close()
+
+    if cache_updated or refresh_vivino:
+        save_vivino_cache(cache_path, cache)
+
+    return updated
+
+
 async def enrich_wine_details(browser: Browser, items: list[WineLink]) -> list[WineLink]:
     enriched: list[WineLink] = []
     page = await browser.new_page(viewport={"width": 1366, "height": 900})
@@ -684,6 +1081,7 @@ async def enrich_wine_details(browser: Browser, items: list[WineLink]) -> list[W
                     body=meta["body"],
                     rating=meta["rating"],
                     reference_price=meta["reference_price"],
+                    vivino_rating=item.vivino_rating,
                     image_url=image_url,
                 )
             )
@@ -730,6 +1128,7 @@ def load_cached_items(output_path: Path) -> dict[tuple[str, str], WineLink]:
             body=str(row.get("body", "") or "").strip(),
             rating=str(row.get("rating", "") or "").strip(),
             reference_price=str(row.get("reference_price", "") or "").strip(),
+            vivino_rating=str(row.get("vivino_rating", "") or "").strip(),
             image_url=str(row.get("image_url", "") or "").strip(),
             image_path=str(row.get("image_path", "") or "").strip(),
         )
@@ -761,6 +1160,7 @@ def merge_with_current_item(current: WineLink, cached: WineLink) -> WineLink:
         body=cached.body,
         rating=cached.rating,
         reference_price=cached.reference_price,
+        vivino_rating=cached.vivino_rating,
         image_url=cached.image_url,
         image_path=cached.image_path,
     )
@@ -786,6 +1186,7 @@ def write_csv(items: list[WineLink], output_path: Path) -> None:
                 "body",
                 "rating",
                 "reference_price",
+                "vivino_rating",
                 "image_url",
                 "image_path",
             ],
@@ -808,6 +1209,7 @@ def write_csv(items: list[WineLink], output_path: Path) -> None:
                     "body": item.body,
                     "rating": item.rating,
                     "reference_price": item.reference_price,
+                    "vivino_rating": item.vivino_rating,
                     "image_url": item.image_url,
                     "image_path": item.image_path,
                 }
@@ -832,6 +1234,7 @@ def write_json(items: list[WineLink], output_path: Path) -> None:
             "body": item.body,
             "rating": item.rating,
             "reference_price": item.reference_price,
+            "vivino_rating": item.vivino_rating,
             "image_url": item.image_url,
             "image_path": item.image_path,
         }
@@ -871,20 +1274,25 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
     country_chips = "\n".join(
         f'      <button class="chip country-chip" data-country="{country}">{country}</button>' for country in countries
     )
+    market_options = "\n".join(
+        f'              <option value="{market}">{market}</option>' for market in markets
+    )
+    country_options = "\n".join(
+        f'              <option value="{country}">{country}</option>' for country in countries
+    )
     rows = "\n".join(
         (
-            f'        <tr data-market="{item.market}" data-country="{item.country if _is_valid_country(item.country) else ""}" data-rating="{item.rating or ""}" data-price="{item.reference_price or ""}">'
+            f'        <tr data-market="{item.market}" data-country="{item.country if _is_valid_country(item.country) else ""}" data-rating="{item.rating or ""}" data-price="{item.reference_price or ""}" data-vivino="{item.vivino_rating or ""}">'
             f'<td><span class="tag">{item.market}</span></td>'
             f'<td><a href="{item.url}" target="_blank" rel="noopener noreferrer">{item.title}</a></td>'
             f'<td>{item.country if _is_valid_country(item.country) else "-"}</td>'
-            f'<td>{item.region or "-"}</td>'
-            f'<td>{item.grape or "-"}</td>'
-            f'<td>{item.abv or "-"}</td>'
             f'<td>{item.winery or "-"}</td>'
+            f'<td>{item.grape or "-"}</td>'
             f'<td>{item.sweetness or "-"}</td>'
             f'<td>{item.acidity or "-"}</td>'
             f'<td>{item.body or "-"}</td>'
             f'<td>{item.rating or "-"}</td>'
+            f'<td>{item.vivino_rating or "-"}</td>'
             f'<td>{item.reference_price or "-"}</td>'
             + (
                 f'<td><a href="{item.image_url}" target="_blank" rel="noopener noreferrer">'
@@ -905,47 +1313,172 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
     <style>
       body {{
         font-family: "Noto Sans TC", "PingFang TC", sans-serif;
-        margin: 24px;
+        margin: 20px;
         line-height: 1.6;
+        color: #1a1a1a;
+        background: linear-gradient(180deg, #fffdf8 0%, #fff 220px);
       }}
-      h1 {{ margin-bottom: 0.25rem; }}
+      h1 {{ margin-bottom: 0.25rem; font-size: clamp(1.3rem, 2.8vw, 1.8rem); }}
       p.meta {{ color: #555; margin-top: 0; }}
-      .toolbar {{ margin: 10px 0 16px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; align-items: center; }}
+      .toolbar {{ margin: 10px 0 12px; display: flex; gap: 8px; flex-wrap: wrap; justify-content: space-between; align-items: center; }}
       .toolbar-left, .toolbar-right {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
-      .toolbar-stack {{ display: flex; flex-direction: column; gap: 8px; width: 100%; }}
-      .chip {{ border: 1px solid #114488; background: #fff; color: #114488; border-radius: 16px; padding: 4px 10px; cursor: pointer; }}
+      .mobile-filter-row {{ display: none; gap: 8px; }}
+      .mobile-filter {{ display: flex; flex-direction: column; gap: 4px; flex: 1; font-size: 0.85rem; color: #667085; }}
+      .mobile-filter select {{
+        width: 100%;
+        border: 1px solid #d9e1ee;
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 0.95rem;
+        color: #1a1a1a;
+        background: #fff;
+      }}
+      .toolbar-stack {{
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        width: 100%;
+        position: sticky;
+        top: 0;
+        background: #fffdf8ee;
+        backdrop-filter: blur(4px);
+        z-index: 2;
+        padding: 6px 0;
+      }}
+      .chip {{ border: 1px solid #114488; background: #fff; color: #114488; border-radius: 16px; padding: 6px 12px; cursor: pointer; font-size: 0.95rem; }}
       .chip.active {{ background: #114488; color: #fff; }}
       .country-chip {{ border-color: #e9b980; color: #9a5e1a; background: #fff9f2; }}
       .country-chip.active {{ background: #f3c48a; border-color: #e2ad68; color: #5e3a10; }}
-      .table-wrap {{ overflow-x: auto; border: 1px solid #dbe5f3; border-radius: 10px; }}
+      .table-wrap {{ overflow-x: auto; border: 1px solid #dbe5f3; border-radius: 10px; background: #fff; }}
       table {{ width: 100%; border-collapse: collapse; min-width: 1400px; }}
-      th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e9eef7; vertical-align: top; }}
+      th, td {{ text-align: center; padding: 10px 12px; border-bottom: 1px solid #e9eef7; vertical-align: middle; }}
       th {{ background: #f4f8ff; font-weight: 600; }}
       tr:hover td {{ background: #fafcff; }}
       .thumb {{ width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid #dbe5f3; background: #fff; }}
-      .tag {{ display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 12px; background: #eef5ff; color: #114488; font-size: 0.85rem; }}
+      .tag {{ display: inline-block; padding: 1px 8px; border-radius: 12px; background: transparent; color: #1a1a1a; font-size: 0.85rem; }}
       a {{ color: #114488; text-decoration: none; }}
       a:hover {{ text-decoration: underline; }}
+
+      @media (max-width: 900px) {{
+        body {{ margin: 12px; }}
+        .mobile-filter-row {{ display: flex; }}
+        .toolbar {{ gap: 6px; margin: 8px 0; }}
+        .toolbar-left {{ display: none; }}
+        .toolbar-left, .toolbar-right {{
+          width: 100%;
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          padding-bottom: 4px;
+          -webkit-overflow-scrolling: touch;
+        }}
+        .toolbar-left::-webkit-scrollbar,
+        .toolbar-right::-webkit-scrollbar {{ height: 6px; }}
+        .toolbar-left::-webkit-scrollbar-thumb,
+        .toolbar-right::-webkit-scrollbar-thumb {{ background: #d8d8d8; border-radius: 999px; }}
+        .chip {{ white-space: nowrap; flex: 0 0 auto; }}
+
+        .table-wrap {{ border: none; background: transparent; overflow: visible; }}
+        table {{ min-width: 0; width: 100%; border-collapse: separate; border-spacing: 0 10px; }}
+        thead {{ display: none; }}
+        tbody tr {{
+          display: grid;
+          grid-template-columns: 116px repeat(6, minmax(0, 1fr));
+          column-gap: 8px;
+          border: 1px solid #e9eef7;
+          border-radius: 12px;
+          padding: 8px 10px;
+          background: #fff;
+          box-shadow: 0 2px 6px rgba(16, 24, 40, 0.04);
+        }}
+        tbody td {{
+          display: grid;
+          grid-template-columns: 58px 1fr;
+          gap: 4px;
+          grid-column: 2 / 8;
+          border-bottom: 1px dashed #eef1f6;
+          padding: 5px 0;
+          font-size: 0.9rem;
+          word-break: break-word;
+          justify-items: center;
+          text-align: center;
+        }}
+        tbody td:nth-child(1) {{ grid-row: 1; grid-column: 2 / 5; }}
+        tbody td:nth-child(2) {{ grid-row: 2; padding-top: 0; }}
+        tbody td:nth-child(3) {{ grid-row: 3; grid-column: 2 / 5; }}
+        tbody td:nth-child(4) {{ grid-row: 3; grid-column: 5 / 8; }}
+        tbody td:nth-child(5) {{ grid-row: 4; }}
+        tbody td:nth-child(6) {{ grid-row: 5; grid-column: 2 / 4; }}
+        tbody td:nth-child(7) {{ grid-row: 5; grid-column: 4 / 6; }}
+        tbody td:nth-child(8) {{ grid-row: 5; grid-column: 6 / 8; }}
+        tbody td:nth-child(9) {{ grid-row: 6; grid-column: 2 / 5; }}
+        tbody td:nth-child(10) {{ grid-row: 6; grid-column: 5 / 8; }}
+        tbody td:nth-child(11) {{ grid-row: 1; grid-column: 5 / 8; }}
+        tbody td:nth-child(12) {{
+          grid-column: 1;
+          grid-row: 1 / span 6;
+          border-bottom: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 2px 0 0;
+        }}
+        tbody td:nth-child(12)::before {{ content: ""; display: none; }}
+        tbody td:nth-child(12) a {{ display: inline-flex; }}
+        tbody td:last-child {{ border-bottom: none; }}
+        tbody td::before {{ color: #667085; font-weight: 600; text-align: center; }}
+        tbody td:nth-child(1)::before {{ content: "賣場"; }}
+        tbody td:nth-child(2)::before {{ content: "酒款"; }}
+        tbody td:nth-child(3)::before {{ content: "國家"; }}
+        tbody td:nth-child(4)::before {{ content: "酒莊"; }}
+        tbody td:nth-child(5)::before {{ content: "葡萄品種"; }}
+        tbody td:nth-child(6)::before {{ content: "甜度"; }}
+        tbody td:nth-child(7)::before {{ content: "酸度"; }}
+        tbody td:nth-child(8)::before {{ content: "飽滿度"; }}
+        tbody td:nth-child(9)::before {{ content: "星等"; }}
+        tbody td:nth-child(10)::before {{ content: "Vivino"; }}
+        tbody td:nth-child(11)::before {{ content: "參考價"; }}
+        tbody td:nth-child(12)::before {{ content: "圖片"; }}
+        .thumb {{ width: 112px; height: 112px; }}
+      }}
     </style>
   </head>
   <body>
     <h1>littlewine 紅酒連結清單</h1>
     <p class=\"meta\">目前顯示 <span id=\"visible-count\">{len(items)}</span> / 全部 <span id=\"total-count\">{len(items)}</span> 筆</p>
     <div class=\"toolbar-stack\">
+      <div class=\"mobile-filter-row\">
+        <label class=\"mobile-filter\">
+          <span>賣場</span>
+          <select id=\"mobile-market\">
+            <option value=\"ALL\">全部</option>
+{market_options}
+          </select>
+        </label>
+        <label class=\"mobile-filter\">
+          <span>國家</span>
+          <select id=\"mobile-country\">
+            <option value=\"ALL\">全部</option>
+{country_options}
+          </select>
+        </label>
+      </div>
       <div class=\"toolbar\">
         <div class=\"toolbar-left\">
           <button class=\"chip market-chip active\" data-market=\"ALL\">全部</button>
 {chips}
-        </div>
-        <div class=\"toolbar-right\">
-          <button class=\"chip sort-chip active\" data-sort=\"rating\">星等高到低</button>
-          <button class=\"chip sort-chip\" data-sort=\"price\">參考價高到低</button>
         </div>
       </div>
       <div class=\"toolbar\">
         <div class=\"toolbar-left\">
           <button class=\"chip country-chip active\" data-country=\"ALL\">全部</button>
 {country_chips}
+        </div>
+      </div>
+      <div class=\"toolbar\">
+        <div class=\"toolbar-right\">
+          <button class=\"chip sort-chip active\" data-sort=\"rating\">星等高到低</button>
+          <button class=\"chip sort-chip\" data-sort=\"price\">參考價高到低</button>
+          <button class=\"chip sort-chip\" data-sort=\"vivino\">Vivino高至低</button>
         </div>
       </div>
     </div>
@@ -956,14 +1489,13 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
             <th>賣場</th>
             <th>酒款</th>
             <th>國家</th>
-            <th>產區</th>
+            <th>酒莊</th>
             <th>葡萄品種</th>
-            <th>酒精濃度</th>
-            <th>酒莊(廠)</th>
             <th>甜度</th>
             <th>酸度</th>
             <th>飽滿度</th>
             <th>星等</th>
+            <th>Vivino</th>
             <th>參考價</th>
             <th>圖片</th>
           </tr>
@@ -980,8 +1512,16 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       const items = Array.from(document.querySelectorAll('tr[data-market]'));
       const tbody = document.querySelector('tbody');
       const visibleCountEl = document.getElementById('visible-count');
+      const mobileMarketSelect = document.getElementById('mobile-market');
+      const mobileCountrySelect = document.getElementById('mobile-country');
       let currentMarket = 'ALL';
       let currentCountry = 'ALL';
+
+      function setActiveChip(chips, key, value) {{
+        chips.forEach((chip) => {{
+          chip.classList.toggle('active', (chip.dataset[key] || 'ALL') === value);
+        }});
+      }}
 
       function parseRating(text) {{
         const match = (text || '').match(/([0-5](?:\.\d+)?)/);
@@ -991,6 +1531,11 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
       function parsePrice(text) {{
         const digits = (text || '').replace(/[^\d]/g, '');
         return digits ? Number(digits) : -1;
+      }}
+
+      function parseVivino(text) {{
+        const match = (text || '').match(/([0-5](?:\.\d+)?)/);
+        return match ? Number(match[1]) : -1;
       }}
 
       function sortRows(mode) {{
@@ -1004,6 +1549,13 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
             const aPrice = parsePrice(a.dataset.price || '');
             const bPrice = parsePrice(b.dataset.price || '');
             if (aPrice !== bPrice) return bPrice - aPrice;
+            return aTitle.localeCompare(bTitle, 'zh-Hant');
+          }}
+
+          if (mode === 'vivino') {{
+            const aVivino = parseVivino(a.dataset.vivino || '');
+            const bVivino = parseVivino(b.dataset.vivino || '');
+            if (aVivino !== bVivino) return bVivino - aVivino;
             return aTitle.localeCompare(bTitle, 'zh-Hant');
           }}
 
@@ -1037,19 +1589,37 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
 
       marketChips.forEach((chip) => {{
         chip.addEventListener('click', () => {{
-          marketChips.forEach((c) => c.classList.remove('active'));
-          chip.classList.add('active');
-          filterBy(chip.dataset.market || 'ALL', currentCountry);
+          const market = chip.dataset.market || 'ALL';
+          setActiveChip(marketChips, 'market', market);
+          if (mobileMarketSelect) mobileMarketSelect.value = market;
+          filterBy(market, currentCountry);
         }});
       }});
 
       countryChips.forEach((chip) => {{
         chip.addEventListener('click', () => {{
-          countryChips.forEach((c) => c.classList.remove('active'));
-          chip.classList.add('active');
-          filterBy(currentMarket, chip.dataset.country || 'ALL');
+          const country = chip.dataset.country || 'ALL';
+          setActiveChip(countryChips, 'country', country);
+          if (mobileCountrySelect) mobileCountrySelect.value = country;
+          filterBy(currentMarket, country);
         }});
       }});
+
+      if (mobileMarketSelect) {{
+        mobileMarketSelect.addEventListener('change', () => {{
+          const market = mobileMarketSelect.value || 'ALL';
+          setActiveChip(marketChips, 'market', market);
+          filterBy(market, currentCountry);
+        }});
+      }}
+
+      if (mobileCountrySelect) {{
+        mobileCountrySelect.addEventListener('change', () => {{
+          const country = mobileCountrySelect.value || 'ALL';
+          setActiveChip(countryChips, 'country', country);
+          filterBy(currentMarket, country);
+        }});
+      }}
 
       sortChips.forEach((chip) => {{
         chip.addEventListener('click', () => {{
@@ -1062,6 +1632,8 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
 
       sortRows('rating');
       filterBy('ALL', 'ALL');
+      if (mobileMarketSelect) mobileMarketSelect.value = 'ALL';
+      if (mobileCountrySelect) mobileCountrySelect.value = 'ALL';
     </script>
   </body>
 </html>
@@ -1098,7 +1670,56 @@ def parse_markets_arg(markets_arg: str | None) -> list[str]:
     return ordered_unique
 
 
-async def run(headed: bool, limit: int | None, markets: list[str], refresh: bool) -> list[WineLink]:
+def pick_items_for_vivino(items: list[WineLink], per_market: int | None) -> list[WineLink]:
+    if per_market is None or per_market <= 0:
+        return items
+    picked: list[WineLink] = []
+    seen: dict[str, int] = {}
+    for item in items:
+        cnt = seen.get(item.market, 0)
+        if cnt >= per_market:
+            continue
+        picked.append(item)
+        seen[item.market] = cnt + 1
+    return picked
+
+
+def merge_vivino_back(base_items: list[WineLink], vivino_items: list[WineLink]) -> list[WineLink]:
+    vivino_map = {(x.market, x.url): x.vivino_rating for x in vivino_items}
+    merged: list[WineLink] = []
+    for item in base_items:
+        merged.append(
+            WineLink(
+                market=item.market,
+                title=item.title,
+                url=item.url,
+                region=item.region,
+                country=item.country,
+                grape=item.grape,
+                abv=item.abv,
+                vintage=item.vintage,
+                winery=item.winery,
+                sweetness=item.sweetness,
+                acidity=item.acidity,
+                body=item.body,
+                rating=item.rating,
+                reference_price=item.reference_price,
+                vivino_rating=vivino_map.get((item.market, item.url), item.vivino_rating),
+                image_url=item.image_url,
+                image_path=item.image_path,
+            )
+        )
+    return merged
+
+
+async def run(
+    headed: bool,
+    limit: int | None,
+    markets: list[str],
+    refresh: bool,
+    refresh_vivino: bool = False,
+    enable_vivino: bool = True,
+) -> list[WineLink]:
     async with async_playwright() as p:
         browser: Browser = await p.chromium.launch(headless=not headed)
         page = await browser.new_page(viewport={"width": 1366, "height": 900})
@@ -1135,6 +1756,13 @@ async def run(headed: bool, limit: int | None, markets: list[str], refresh: bool
 
             enriched_new = await enrich_wine_details(browser, to_parse) if to_parse else []
             enriched = sorted([*reused, *enriched_new], key=lambda x: (x.market, x.title))
+            if enable_vivino:
+                enriched = await enrich_vivino_ratings(
+                    browser,
+                    enriched,
+                    VIVINO_CACHE_OUTPUT,
+                    refresh_vivino=refresh_vivino,
+                )
             return enriched
         finally:
             await browser.close()
@@ -1175,6 +1803,22 @@ def parse_args() -> argparse.Namespace:
         default=JSON_OUTPUT.as_posix(),
         help="JSON file used by --render-only (default: docs/data/littlewine_red_pxmart_links.json)",
     )
+    parser.add_argument(
+        "--refresh-vivino",
+        action="store_true",
+        help="Force re-query Vivino ratings even if cached",
+    )
+    parser.add_argument(
+        "--vivino-only",
+        action="store_true",
+        help="Only enrich Vivino ratings from existing JSON without scraping littlewine",
+    )
+    parser.add_argument(
+        "--vivino-limit-per-market",
+        type=int,
+        default=None,
+        help="When used with --vivino-only, only query first N items per market",
+    )
     return parser.parse_args()
 
 
@@ -1214,6 +1858,7 @@ def download_images(items: list[WineLink], output_dir: Path) -> list[WineLink]:
                 body=item.body,
                 rating=item.rating,
                 reference_price=item.reference_price,
+                vivino_rating=item.vivino_rating,
                 image_url=item.image_url,
                 image_path=image_path,
             )
@@ -1224,6 +1869,37 @@ def download_images(items: list[WineLink], output_dir: Path) -> list[WineLink]:
 
 def main() -> None:
     args = parse_args()
+
+    if args.vivino_only:
+        input_path = Path(args.input_json)
+        items = load_items_from_json(input_path)
+        if not items:
+            raise SystemExit(f"No items found in {input_path}.")
+
+        targets = pick_items_for_vivino(items, args.vivino_limit_per_market)
+        print(f"[VIVINO] Target items: {len(targets)} / total {len(items)}")
+
+        async def _run_vivino_only() -> list[WineLink]:
+            async with async_playwright() as p:
+                browser: Browser = await p.chromium.launch(headless=not args.headed)
+                try:
+                    return await enrich_vivino_ratings(
+                        browser,
+                        targets,
+                        VIVINO_CACHE_OUTPUT,
+                        refresh_vivino=args.refresh_vivino,
+                    )
+                finally:
+                    await browser.close()
+
+        vivino_enriched = asyncio.run(_run_vivino_only())
+        merged = merge_vivino_back(items, vivino_enriched)
+        merged = download_images(merged, IMAGE_DIR)
+        write_html(merged, HTML_OUTPUT)
+        write_csv(merged, CSV_OUTPUT)
+        write_json(merged, JSON_OUTPUT)
+        print("Done. Vivino enrichment only completed.")
+        return
 
     if args.render_only:
         input_path = Path(args.input_json)
@@ -1239,7 +1915,20 @@ def main() -> None:
     except ValueError as exc:
         raise SystemExit(str(exc))
 
-    links = asyncio.run(run(headed=args.headed, limit=args.limit, markets=markets, refresh=args.refresh))
+    enable_vivino = args.limit is None
+    if not enable_vivino:
+        print("[VIVINO] Skip Vivino lookup because --limit is set")
+
+    links = asyncio.run(
+        run(
+            headed=args.headed,
+            limit=args.limit,
+            markets=markets,
+            refresh=args.refresh,
+            refresh_vivino=args.refresh_vivino,
+            enable_vivino=enable_vivino,
+        )
+    )
     links = download_images(links, IMAGE_DIR)
 
     write_html(links, HTML_OUTPUT)
