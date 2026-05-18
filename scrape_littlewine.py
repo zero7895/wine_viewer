@@ -322,6 +322,13 @@ def rating_from_score_classes(classes: str) -> str:
     return f"{value:g}/5"
 
 
+def normalize_score_text(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    return re.sub(r"\s*/\s*5\s*$", "", raw)
+
+
 async def extract_score_from_area(page: Page, area_selectors: list[str]) -> str:
     """Find score class under area selectors, e.g. .starArea/.sweetArea."""
     for selector in area_selectors:
@@ -1076,10 +1083,10 @@ async def enrich_wine_details(browser: Browser, items: list[WineLink]) -> list[W
                     abv=meta["abv"],
                     vintage=meta["vintage"],
                     winery=meta["winery"],
-                    sweetness=meta["sweetness"],
-                    acidity=meta["acidity"],
-                    body=meta["body"],
-                    rating=meta["rating"],
+                    sweetness=normalize_score_text(meta["sweetness"]),
+                    acidity=normalize_score_text(meta["acidity"]),
+                    body=normalize_score_text(meta["body"]),
+                    rating=normalize_score_text(meta["rating"]),
                     reference_price=meta["reference_price"],
                     vivino_rating=item.vivino_rating,
                     image_url=image_url,
@@ -1123,10 +1130,10 @@ def load_cached_items(output_path: Path) -> dict[tuple[str, str], WineLink]:
             abv=str(row.get("abv", "") or "").strip(),
             vintage=str(row.get("vintage", "") or "").strip(),
             winery=str(row.get("winery", "") or "").strip(),
-            sweetness=str(row.get("sweetness", "") or "").strip(),
-            acidity=str(row.get("acidity", "") or "").strip(),
-            body=str(row.get("body", "") or "").strip(),
-            rating=str(row.get("rating", "") or "").strip(),
+            sweetness=normalize_score_text(str(row.get("sweetness", "") or "").strip()),
+            acidity=normalize_score_text(str(row.get("acidity", "") or "").strip()),
+            body=normalize_score_text(str(row.get("body", "") or "").strip()),
+            rating=normalize_score_text(str(row.get("rating", "") or "").strip()),
             reference_price=str(row.get("reference_price", "") or "").strip(),
             vivino_rating=str(row.get("vivino_rating", "") or "").strip(),
             image_url=str(row.get("image_url", "") or "").strip(),
@@ -1263,6 +1270,12 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
         digits = re.sub(r"\D", "", raw or "")
         return int(digits) if digits else -1
 
+    def _score_display(raw: str) -> str:
+        value = (raw or "").strip()
+        if not value:
+            return "-"
+        return re.sub(r"\s*/\s*5\s*$", "", value)
+
     # 預設先依星等高到低（同星等再依參考價高到低）輸出。
     items = sorted(items, key=lambda x: (_rating_value(x.rating), _price_value(x.reference_price), x.title), reverse=True)
 
@@ -1288,10 +1301,10 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
             f'<td>{item.country if _is_valid_country(item.country) else "-"}</td>'
             f'<td>{item.winery or "-"}</td>'
             f'<td>{item.grape or "-"}</td>'
-            f'<td>{item.sweetness or "-"}</td>'
-            f'<td>{item.acidity or "-"}</td>'
-            f'<td>{item.body or "-"}</td>'
-            f'<td>{item.rating or "-"}</td>'
+            f'<td>{_score_display(item.sweetness)}</td>'
+            f'<td>{_score_display(item.acidity)}</td>'
+            f'<td>{_score_display(item.body)}</td>'
+            f'<td>{_score_display(item.rating)}</td>'
             f'<td>{item.vivino_rating or "-"}</td>'
             f'<td>{item.reference_price or "-"}</td>'
             + (
