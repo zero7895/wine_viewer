@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Littlewine Scraper README</title>
+  <style>
+    body { font-family: "Noto Sans TC", "PingFang TC", sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.7; }
+    code, pre { font-family: "SFMono-Regular", Menlo, Consolas, monospace; }
+    pre { background: #f4f4f4; padding: 0.8rem; overflow: auto; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Littlewine Scraper (GitHub Pages Ready)</h1>
+  <p>此專案會抓取 littlewine 紅酒資料，並直接輸出到 GitHub Pages 可用的 <code>docs/</code> 目錄。</p>
+
+  <h2>輸出位置</h2>
+  <ul>
+    <li><code>docs/index.html</code></li>
+    <li><code>docs/images/</code></li>
+    <li><code>docs/data/littlewine_red_pxmart_links.json</code></li>
+    <li><code>docs/data/littlewine_red_pxmart_links.csv</code></li>
+  </ul>
+
+  <h2>安裝</h2>
+  <pre><code>conda create -n littlewine-scraper python=3.11 -y
+conda activate littlewine-scraper
+pip install -r requirements.txt
+python -m playwright install chromium</code></pre>
+
+  <h2>執行</h2>
+  <pre><code>python scrape_littlewine.py</code></pre>
+
+  <h2>常用指令</h2>
+  <ul>
+    <li><code>python scrape_littlewine.py --refresh</code></li>
+    <li><code>python scrape_littlewine.py --render-only</code></li>
+    <li><code>python scrape_littlewine.py --markets "全聯,家樂福"</code></li>
+    <li><code>python scrape_littlewine.py --limit 3</code></li>
+  </ul>
+
+  <h2>GitHub Pages 部署</h2>
+  <ol>
+    <li>推送程式碼到 GitHub</li>
+    <li>到 <code>Settings -&gt; Pages</code></li>
+    <li>Source 選 <code>Deploy from a branch</code></li>
+    <li>Branch 選 <code>main</code>，Folder 選 <code>/docs</code></li>
+  </ol>
+
+  <p>網址格式：<code>https://&lt;你的帳號&gt;.github.io/&lt;repo名稱&gt;/</code></p>
+</body>
+</html>

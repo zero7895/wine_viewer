@@ -19,10 +19,13 @@ from playwright.async_api import Browser, Page, TimeoutError, async_playwright
 
 
 BASE_URL = "https://littlewine.com.tw/"
-HTML_OUTPUT = "red_wine.html"
-CSV_OUTPUT = "littlewine_red_pxmart_links.csv"
-JSON_OUTPUT = "littlewine_red_pxmart_links.json"
-IMAGE_DIR = "images"
+OUTPUT_DIR = Path("docs")
+DATA_DIR = OUTPUT_DIR / "data"
+HTML_OUTPUT = OUTPUT_DIR / "index.html"
+CSV_OUTPUT = DATA_DIR / "littlewine_red_pxmart_links.csv"
+JSON_OUTPUT = DATA_DIR / "littlewine_red_pxmart_links.json"
+IMAGE_DIR = OUTPUT_DIR / "images"
+IMAGE_WEB_PREFIX = "images"
 ALL_MARKETS = ["大全聯", "全聯", "好市多", "家樂福", "美廉社", "大潤發", "愛買"]
 
 
@@ -764,6 +767,7 @@ def merge_with_current_item(current: WineLink, cached: WineLink) -> WineLink:
 
 
 def write_csv(items: list[WineLink], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
             f,
@@ -811,6 +815,7 @@ def write_csv(items: list[WineLink], output_path: Path) -> None:
 
 
 def write_json(items: list[WineLink], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     payload = [
         {
             "market": item.market,
@@ -837,6 +842,7 @@ def write_json(items: list[WineLink], output_path: Path) -> None:
 
 
 def write_html(items: list[WineLink], output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     def _rating_value(raw: str) -> float:
         m = re.search(r"([0-5](?:\.\d+)?)", raw or "")
         return float(m.group(1)) if m else -1.0
@@ -1098,7 +1104,7 @@ async def run(headed: bool, limit: int | None, markets: list[str], refresh: bool
             merged_items = sorted(merged.values(), key=lambda x: (x.market, x.title))
             print(f"[DETAIL] Start detail scraping for {len(merged_items)} links...")
 
-            cache = {} if refresh else load_cached_items(Path(JSON_OUTPUT))
+            cache = {} if refresh else load_cached_items(JSON_OUTPUT)
             to_parse: list[WineLink] = []
             reused: list[WineLink] = []
             for item in merged_items:
@@ -1112,7 +1118,7 @@ async def run(headed: bool, limit: int | None, markets: list[str], refresh: bool
             if refresh:
                 print("[CACHE] Refresh mode on, skip cache reuse")
             elif reused:
-                print(f"[CACHE] Reused {len(reused)} parsed items from {JSON_OUTPUT}")
+                print(f"[CACHE] Reused {len(reused)} parsed items from {JSON_OUTPUT.as_posix()}")
             if to_parse:
                 print(f"[DETAIL] Need to parse {len(to_parse)} new items...")
 
@@ -1155,8 +1161,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--input-json",
         type=str,
-        default=JSON_OUTPUT,
-        help="JSON file used by --render-only (default: littlewine_red_pxmart_links.json)",
+        default=JSON_OUTPUT.as_posix(),
+        help="JSON file used by --render-only (default: docs/data/littlewine_red_pxmart_links.json)",
     )
     return parser.parse_args()
 
@@ -1177,7 +1183,7 @@ def download_images(items: list[WineLink], output_dir: Path) -> list[WineLink]:
             try:
                 if not file_path.exists():
                     urlretrieve(item.image_url, file_path)
-                image_path = str((Path(IMAGE_DIR) / file_name).as_posix())
+                image_path = str((Path(IMAGE_WEB_PREFIX) / file_name).as_posix())
             except Exception:
                 image_path = ""
 
@@ -1213,8 +1219,8 @@ def main() -> None:
         items = load_items_from_json(input_path)
         if not items:
             raise SystemExit(f"No items found in {input_path}. Run scraping first or provide a valid JSON file.")
-        write_html(items, Path(HTML_OUTPUT))
-        print(f"Done. Rendered {len(items)} items to {HTML_OUTPUT} from {input_path}")
+        write_html(items, HTML_OUTPUT)
+        print(f"Done. Rendered {len(items)} items to {HTML_OUTPUT.as_posix()} from {input_path}")
         return
 
     try:
@@ -1223,16 +1229,16 @@ def main() -> None:
         raise SystemExit(str(exc))
 
     links = asyncio.run(run(headed=args.headed, limit=args.limit, markets=markets, refresh=args.refresh))
-    links = download_images(links, Path(IMAGE_DIR))
+    links = download_images(links, IMAGE_DIR)
 
-    write_html(links, Path(HTML_OUTPUT))
-    write_csv(links, Path(CSV_OUTPUT))
-    write_json(links, Path(JSON_OUTPUT))
+    write_html(links, HTML_OUTPUT)
+    write_csv(links, CSV_OUTPUT)
+    write_json(links, JSON_OUTPUT)
 
     print(f"Done. Collected {len(links)} links.")
-    print(f"- {HTML_OUTPUT}")
-    print(f"- {CSV_OUTPUT}")
-    print(f"- {JSON_OUTPUT}")
+    print(f"- {HTML_OUTPUT.as_posix()}")
+    print(f"- {CSV_OUTPUT.as_posix()}")
+    print(f"- {JSON_OUTPUT.as_posix()}")
 
 
 if __name__ == "__main__":
