@@ -1410,6 +1410,12 @@ def write_html(items: list[WineLink], output_path: Path) -> None:
         tbody td:nth-child(6) {{ grid-row: 5; grid-column: 2 / 4; }}
         tbody td:nth-child(7) {{ grid-row: 5; grid-column: 4 / 6; }}
         tbody td:nth-child(8) {{ grid-row: 5; grid-column: 6 / 8; }}
+        tbody td:nth-child(6),
+        tbody td:nth-child(7),
+        tbody td:nth-child(8) {{
+          white-space: nowrap;
+          word-break: normal;
+        }}
         tbody td:nth-child(9) {{ grid-row: 6; grid-column: 2 / 5; }}
         tbody td:nth-child(10) {{ grid-row: 6; grid-column: 5 / 8; }}
         tbody td:nth-child(11) {{ grid-row: 1; grid-column: 5 / 8; }}

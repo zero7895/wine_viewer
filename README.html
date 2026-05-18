@@ -45,6 +45,20 @@ python -m playwright install chromium</code></pre>
     <li><code>python scrape_littlewine.py --markets "全聯,家樂福"</code></li>
   </ul>
 
+  <h2>日常更新流程（補新資料）</h2>
+  <ol>
+    <li>完整更新（抓 littlewine + 補 Vivino）：<br /><code>python scrape_littlewine.py</code></li>
+    <li>只改 UI 時重生 HTML：<br /><code>python scrape_littlewine.py --render-only</code></li>
+    <li>先小量驗證 Vivino：<br /><code>python scrape_littlewine.py --vivino-only --vivino-limit-per-market 3 --refresh-vivino</code></li>
+    <li>確認後補齊 Vivino（只補缺少）：<br /><code>python scrape_littlewine.py --vivino-only</code></li>
+  </ol>
+
+  <h2>更新網站</h2>
+  <pre><code>git add docs README.md README.html scrape_littlewine.py
+git commit -m "update wine data and page"
+git push</code></pre>
+  <p>Push 後 GitHub Pages 會自動更新。</p>
+
   <h2>GitHub Pages 部署</h2>
   <ol>
     <li>推送程式碼到 GitHub</li>

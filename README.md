@@ -67,6 +67,40 @@ python scrape_littlewine.py --vivino-only
 - 可先小量測試：`python scrape_littlewine.py --vivino-only --vivino-limit-per-market 3`
 - 強制重查 Vivino：`python scrape_littlewine.py --vivino-only --refresh-vivino`
 
+## 日常更新建議流程（之後補新資料用）
+
+### A. 有新酒款資料要更新（完整更新）
+
+```bash
+python scrape_littlewine.py
+```
+
+- 會抓 littlewine 新資料
+- 會補 Vivino 分數（已有快取的會重用）
+- 會更新 `docs/index.html`、`docs/data/*.json`、`docs/data/*.csv`
+
+### B. 只調整頁面 UI（不重抓資料）
+
+```bash
+python scrape_littlewine.py --render-only
+```
+
+### C. 先小量驗證再補 Vivino
+
+```bash
+# 每個賣場先查 3 筆
+python scrape_littlewine.py --vivino-only --vivino-limit-per-market 3 --refresh-vivino
+
+# 確認沒問題後，對既有資料補齊 Vivino（只補缺少的）
+python scrape_littlewine.py --vivino-only
+```
+
+### D. 要快速抓樣本資料（不查 Vivino）
+
+```bash
+python scrape_littlewine.py --limit 3
+```
+
 ## 常用指令
 
 - 全流程（抓 littlewine + 查 Vivino）：`python scrape_littlewine.py`
@@ -125,3 +159,11 @@ git push
 ```
 
 Push 後 GitHub Pages 會自動更新。
+
+## 每次更新後建議
+
+```bash
+git add docs README.md README.html scrape_littlewine.py
+git commit -m "update wine data and page"
+git push
+```
